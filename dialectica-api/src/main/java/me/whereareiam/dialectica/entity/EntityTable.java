@@ -133,6 +133,49 @@ public abstract class EntityTable<T> {
 		return column;
 	}
 
+	/**
+	 * Finds a column by name, typed by the Java type of its values, for code that knows a column's
+	 * name only at runtime:
+	 * <pre>{@code
+	 * EntityColumn<StoreEntry, String> storeName = table.column("store_name", String.class);
+	 * }</pre>
+	 *
+	 * @param name name of the column
+	 * @param type Java type of the column's values, a wrapper type for primitives
+	 * @param <V>  Java type of the column's values
+	 * @return the column
+	 * @throws IllegalArgumentException when the table has no column of that name, or its values are
+	 *                                  of another type
+	 */
+	@SuppressWarnings("unchecked")
+	public final <V> @NotNull EntityColumn<T, V> column(@NotNull String name, @NotNull Class<V> type) {
+		EntityColumn<T, ?> column = column(name);
+		if (!column.type().equals(type))
+			throw new IllegalArgumentException("Column " + name + " of " + table.getName() + " holds "
+					+ column.type().getSimpleName() + " values, not " + type.getSimpleName());
+
+		return (EntityColumn<T, V>) column;
+	}
+
+	/**
+	 * Returns the table's own column for a column of the same name and definition, which may come
+	 * from another reading of the same entity, such as a generated {@code <Entity>Columns} class.
+	 *
+	 * @param column a column
+	 * @param <V>    Java type of the column's values
+	 * @return the table's column
+	 * @throws IllegalArgumentException when the table has no such column
+	 */
+	@SuppressWarnings("unchecked")
+	public final <V> @NotNull EntityColumn<T, V> column(@NotNull EntityColumn<T, V> column) {
+		Objects.requireNonNull(column, "column");
+		EntityColumn<T, ?> own = findColumn(column.name());
+		if (own == null || !own.column().equals(column.column()) || !own.type().equals(column.type()))
+			throw new IllegalArgumentException(column + " is not a column of " + table.getName());
+
+		return (EntityColumn<T, V>) own;
+	}
+
 	private @Nullable EntityColumn<T, ?> findColumn(String name) {
 		for (EntityColumn<T, ?> column : columns)
 			if (column.name().equals(name)) return column;
