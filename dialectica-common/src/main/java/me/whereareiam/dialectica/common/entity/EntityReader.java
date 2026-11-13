@@ -23,6 +23,8 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.RecordComponent;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -250,15 +252,19 @@ public final class EntityReader {
 		if (javaType == Long.class) return ColumnType.bigint();
 		if (javaType == Integer.class) return ColumnType.integer();
 		if (javaType == Boolean.class) return ColumnType.bool();
+		if (javaType == Instant.class) return ColumnType.instant();
+		if (javaType == LocalDate.class) return ColumnType.date();
 
 		throw invalid(type, field, "type " + field.getType().getName()
-				+ " has no column type; use UUID, String, long, int or boolean or their wrappers");
+				+ " has no column type; use UUID, String, long, int, boolean or their wrappers, Instant or LocalDate");
 	}
 
 	/**
 	 * Gives a column the default of its field, read by the column's type.
 	 */
 	private static void defaultValue(Class<?> type, Field field, ColumnType columnType, String value, ColumnDefinition.Builder column) {
+		if (columnType instanceof ColumnType.InstantType || columnType instanceof ColumnType.DateType)
+			throw invalid(type, field, "@Default applies to UUID, text, number and boolean fields, not to " + field.getType().getSimpleName());
 		if (columnType instanceof ColumnType.BoolType) {
 			column.defaultValue(booleanDefault(type, field, value));
 			return;

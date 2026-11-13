@@ -14,10 +14,13 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 /**
- * The dialect of SQLite, which stores UUIDs as text and booleans as the integers 1 and 0.
+ * The dialect of SQLite, which stores UUIDs, instants and dates as text and booleans as the
+ * integers 1 and 0.
  * Dropping a column needs SQLite 3.35 or newer.
  */
 public final class SqliteDialect extends AnsiDialect {
@@ -68,7 +71,29 @@ public final class SqliteDialect extends AnsiDialect {
 	}
 
 	@Override
+	protected void bindInstant(@NotNull PreparedStatement statement, int index, @NotNull Instant value) throws SQLException {
+		bindInstantAsText(statement, index, value);
+	}
+
+	@Override
+	protected @Nullable Instant readInstant(@NotNull ResultSet row, int column) throws SQLException {
+		return readInstantAsText(row, column);
+	}
+
+	@Override
+	protected void bindDate(@NotNull PreparedStatement statement, int index, @NotNull LocalDate value) throws SQLException {
+		bindDateAsText(statement, index, value);
+	}
+
+	@Override
+	protected @Nullable LocalDate readDate(@NotNull ResultSet row, int column) throws SQLException {
+		return readDateAsText(row, column);
+	}
+
+	@Override
 	protected int sqlType(@NotNull ColumnType type) {
-		return type instanceof ColumnType.UuidType ? Types.VARCHAR : super.sqlType(type);
+		boolean text = type instanceof ColumnType.UuidType || type instanceof ColumnType.InstantType || type instanceof ColumnType.DateType;
+
+		return text ? Types.VARCHAR : super.sqlType(type);
 	}
 }

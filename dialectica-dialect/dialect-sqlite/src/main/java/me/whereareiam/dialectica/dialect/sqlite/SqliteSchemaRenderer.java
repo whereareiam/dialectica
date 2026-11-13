@@ -27,6 +27,7 @@ public final class SqliteSchemaRenderer extends AnsiSchemaRenderer {
 	protected @NotNull String type(@NotNull ColumnType type) {
 		if (type instanceof ColumnType.VarcharType varchar) return "VARCHAR(" + varchar.length() + ")";
 		if (type instanceof ColumnType.UuidType || type instanceof ColumnType.TextType) return "TEXT";
+		if (type instanceof ColumnType.InstantType || type instanceof ColumnType.DateType) return "TEXT";
 		if (type instanceof ColumnType.BigintType || type instanceof ColumnType.IntegerType) return "INTEGER";
 		if (type instanceof ColumnType.BoolType) return "INTEGER";
 

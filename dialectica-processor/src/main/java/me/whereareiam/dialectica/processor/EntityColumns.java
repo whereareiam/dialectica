@@ -34,7 +34,9 @@ final class EntityColumns {
 			"java.lang.Integer", "Integer",
 			"java.lang.Boolean", "Boolean",
 			"java.lang.String", "String",
-			"java.util.UUID", "java.util.UUID"
+			"java.util.UUID", "java.util.UUID",
+			"java.time.Instant", "java.time.Instant",
+			"java.time.LocalDate", "java.time.LocalDate"
 	);
 
 	private final TypeElement type;
@@ -65,7 +67,7 @@ final class EntityColumns {
 			VariableElement taken = constants.putIfAbsent(constant, field);
 			if (valueType == null)
 				problems.add(new Problem(field, "Field " + field.getSimpleName() + " of type " + field.asType()
-						+ " has no column type; use UUID, String, long, int or boolean or their wrappers"));
+						+ " has no column type; use UUID, String, long, int, boolean or their wrappers, Instant or LocalDate"));
 			if (taken != null)
 				problems.add(new Problem(field, "Columns of " + taken.getSimpleName() + " and " + field.getSimpleName()
 						+ " would both be the constant " + constant));

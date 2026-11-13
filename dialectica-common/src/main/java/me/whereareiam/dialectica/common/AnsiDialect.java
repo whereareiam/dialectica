@@ -9,6 +9,12 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -16,9 +22,12 @@ import java.util.regex.Pattern;
 /**
  * What the supported dialects share: how names are quoted and how values are bound and read. A
  * dialect supplies its name, how it recognizes its database and its renderers, and overrides only
- * what it does differently, such as storing UUIDs as text.
+ * what it does differently, such as storing UUIDs as text. Instants are written to the
+ * microsecond; finer parts are cut off rather than left to each database to round.
  */
 public abstract class AnsiDialect implements Dialect {
+	private static final DateTimeFormatter INSTANT_TEXT = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'").withZone(ZoneOffset.UTC);
+	private static final DateTimeFormatter DATE_TEXT = DateTimeFormatter.ofPattern("uuuu-MM-dd");
 	private static final Pattern BARE_IDENTIFIER = Pattern.compile("[a-z_][a-z0-9_]*");
 
 	/**
@@ -69,6 +78,8 @@ public abstract class AnsiDialect implements Dialect {
 		else if (type instanceof ColumnType.BigintType) statement.setLong(index, (Long) value);
 		else if (type instanceof ColumnType.IntegerType) statement.setInt(index, (Integer) value);
 		else if (type instanceof ColumnType.BoolType) statement.setBoolean(index, (Boolean) value);
+		else if (type instanceof ColumnType.InstantType) bindInstant(statement, index, ((Instant) value).truncatedTo(ChronoUnit.MICROS));
+		else if (type instanceof ColumnType.DateType) bindDate(statement, index, (LocalDate) value);
 		else throw new IllegalArgumentException("Unknown column type " + type);
 	}
 
@@ -80,6 +91,8 @@ public abstract class AnsiDialect implements Dialect {
 		else if (type instanceof ColumnType.BigintType) value = row.getLong(column);
 		else if (type instanceof ColumnType.IntegerType) value = row.getInt(column);
 		else if (type instanceof ColumnType.BoolType) value = row.getBoolean(column);
+		else if (type instanceof ColumnType.InstantType) value = readInstant(row, column);
+		else if (type instanceof ColumnType.DateType) value = readDate(row, column);
 		else throw new IllegalArgumentException("Unknown column type " + type);
 
 		return row.wasNull() ? null : value;
@@ -120,8 +133,113 @@ public abstract class AnsiDialect implements Dialect {
 		if (type instanceof ColumnType.TextType) return Types.LONGVARCHAR;
 		if (type instanceof ColumnType.BigintType) return Types.BIGINT;
 		if (type instanceof ColumnType.IntegerType) return Types.INTEGER;
+		if (type instanceof ColumnType.InstantType) return Types.TIMESTAMP_WITH_TIMEZONE;
+		if (type instanceof ColumnType.DateType) return Types.DATE;
 
 		return Types.BOOLEAN;
+	}
+
+	/**
+	 * Binds an instant, as a timestamp with time zone in UTC by default.
+	 *
+	 * @param statement statement to bind to
+	 * @param index     1-based index of the parameter
+	 * @param value     instant to bind, already cut to the microsecond
+	 * @throws SQLException when the driver refuses the value
+	 */
+	protected void bindInstant(@NotNull PreparedStatement statement, int index, @NotNull Instant value) throws SQLException {
+		statement.setObject(index, OffsetDateTime.ofInstant(value, ZoneOffset.UTC));
+	}
+
+	/**
+	 * Reads an instant, from a timestamp with time zone by default.
+	 *
+	 * @param row    result set positioned on a row
+	 * @param column 1-based index of the column
+	 * @return the instant, or {@code null}
+	 * @throws SQLException when the value cannot be read
+	 */
+	protected @Nullable Instant readInstant(@NotNull ResultSet row, int column) throws SQLException {
+		OffsetDateTime value = row.getObject(column, OffsetDateTime.class);
+
+		return value == null ? null : value.toInstant();
+	}
+
+	/**
+	 * Binds a date, natively by default.
+	 *
+	 * @param statement statement to bind to
+	 * @param index     1-based index of the parameter
+	 * @param value     date to bind
+	 * @throws SQLException when the driver refuses the value
+	 */
+	protected void bindDate(@NotNull PreparedStatement statement, int index, @NotNull LocalDate value) throws SQLException {
+		statement.setObject(index, value);
+	}
+
+	/**
+	 * Reads a date, natively by default.
+	 *
+	 * @param row    result set positioned on a row
+	 * @param column 1-based index of the column
+	 * @return the date, or {@code null}
+	 * @throws SQLException when the value cannot be read
+	 */
+	protected @Nullable LocalDate readDate(@NotNull ResultSet row, int column) throws SQLException {
+		return row.getObject(column, LocalDate.class);
+	}
+
+	/**
+	 * Binds an instant as ISO-8601 text of a fixed width in UTC, {@code 2026-11-14T09:30:00.000000Z},
+	 * which sorts in time order, for dialects that store instants as text.
+	 *
+	 * @param statement statement to bind to
+	 * @param index     1-based index of the parameter
+	 * @param value     instant to bind, already cut to the microsecond
+	 * @throws SQLException when the driver refuses the value
+	 */
+	protected static void bindInstantAsText(@NotNull PreparedStatement statement, int index, @NotNull Instant value) throws SQLException {
+		statement.setString(index, INSTANT_TEXT.format(value));
+	}
+
+	/**
+	 * Reads an instant stored as ISO-8601 text.
+	 *
+	 * @param row    result set positioned on a row
+	 * @param column 1-based index of the column
+	 * @return the instant, or {@code null}
+	 * @throws SQLException when the value cannot be read
+	 */
+	protected static @Nullable Instant readInstantAsText(@NotNull ResultSet row, int column) throws SQLException {
+		String text = row.getString(column);
+
+		return text == null ? null : Instant.parse(text);
+	}
+
+	/**
+	 * Binds a date as ISO-8601 text, {@code 2026-11-14}, for dialects that store dates as text.
+	 *
+	 * @param statement statement to bind to
+	 * @param index     1-based index of the parameter
+	 * @param value     date to bind
+	 * @throws SQLException when the driver refuses the value
+	 */
+	protected static void bindDateAsText(@NotNull PreparedStatement statement, int index, @NotNull LocalDate value) throws SQLException {
+		statement.setString(index, DATE_TEXT.format(value));
+	}
+
+	/**
+	 * Reads a date stored as ISO-8601 text.
+	 *
+	 * @param row    result set positioned on a row
+	 * @param column 1-based index of the column
+	 * @return the date, or {@code null}
+	 * @throws SQLException when the value cannot be read
+	 */
+	protected static @Nullable LocalDate readDateAsText(@NotNull ResultSet row, int column) throws SQLException {
+		String text = row.getString(column);
+
+		return text == null ? null : LocalDate.parse(text);
 	}
 
 	/**

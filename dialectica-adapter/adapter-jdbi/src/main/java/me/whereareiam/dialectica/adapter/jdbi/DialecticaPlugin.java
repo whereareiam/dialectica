@@ -13,9 +13,10 @@ import java.sql.SQLException;
 import java.util.Objects;
 
 /**
- * Makes a {@code Jdbi} speak a Dialectica {@link Dialect}: it binds and maps {@link java.util.UUID}
- * and {@link Boolean} values the way the dialect stores them, so a UUID becomes text on SQLite and
- * {@code CHAR(36)} on MySQL, and it lets {@link EntityAccess} and {@link RegisterDialecticaMapper}
+ * Makes a {@code Jdbi} speak a Dialectica {@link Dialect}: it binds and maps {@link java.util.UUID},
+ * {@link Boolean}, {@link java.time.Instant} and {@link java.time.LocalDate} values the way the
+ * dialect stores them, so a UUID becomes text on SQLite and {@code CHAR(36)} on MySQL, and an
+ * instant ISO-8601 text on SQLite and a {@code DATETIME(6)} in UTC on MySQL, and it lets {@link EntityAccess} and {@link RegisterDialecticaMapper}
  * find the dialect.
  * <pre>{@code
  * Jdbi jdbi = Jdbi.create(dataSource);

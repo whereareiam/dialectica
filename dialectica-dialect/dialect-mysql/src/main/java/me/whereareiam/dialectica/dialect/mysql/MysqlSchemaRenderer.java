@@ -30,6 +30,8 @@ public class MysqlSchemaRenderer extends AnsiSchemaRenderer {
 		if (type instanceof ColumnType.BigintType) return "BIGINT";
 		if (type instanceof ColumnType.IntegerType) return "INT";
 		if (type instanceof ColumnType.BoolType) return "BOOLEAN";
+		if (type instanceof ColumnType.InstantType) return "DATETIME(6)";
+		if (type instanceof ColumnType.DateType) return "DATE";
 
 		throw new IllegalArgumentException("Unknown column type " + type);
 	}

@@ -6,6 +6,8 @@ import me.whereareiam.dialectica.entity.EntityColumn;
 import me.whereareiam.dialectica.entity.Where;
 import me.whereareiam.dialectica.exception.KeyConflictException;
 import me.whereareiam.dialectica.fixture.Account;
+import me.whereareiam.dialectica.fixture.AccountEvent;
+import me.whereareiam.dialectica.fixture.AccountEventColumns;
 import me.whereareiam.dialectica.fixture.AccountColumns;
 import me.whereareiam.dialectica.fixture.AccountReservation;
 import me.whereareiam.dialectica.fixture.AccountReservationColumns;
@@ -22,6 +24,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.sql.SQLException;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -56,6 +60,7 @@ abstract class EntityAccessContract {
 	private EntityAccess<Account> accounts;
 	private EntityAccess<ProviderLink> links;
 	private EntityAccess<AccountReservation> reservations;
+	private EntityAccess<AccountEvent> events;
 
 	/**
 	 * Creates a Jdbi for an empty or reusable database of the dialect under test.
@@ -73,18 +78,21 @@ abstract class EntityAccessContract {
 			writer.apply(
 					new DropTable("identica_provider_links"),
 					new DropTable("identica_account_reservations"),
+					new DropTable("identica_account_events"),
 					new DropTable("identica_accounts")
 			);
 			writer.create(Schema.of(
 					Dialectica.entity(Account.class).table(),
 					Dialectica.entity(ProviderLink.class).table(),
-					Dialectica.entity(AccountReservation.class).table()
+					Dialectica.entity(AccountReservation.class).table(),
+					Dialectica.entity(AccountEvent.class).table()
 			));
 		});
 
 		accounts = EntityAccess.of(jdbi, Dialectica.entity(Account.class));
 		links = EntityAccess.of(jdbi, Dialectica.entity(ProviderLink.class));
 		reservations = EntityAccess.of(jdbi, Dialectica.entity(AccountReservation.class));
+		events = EntityAccess.of(jdbi, Dialectica.entity(AccountEvent.class));
 	}
 
 	@Test
@@ -603,6 +611,59 @@ abstract class EntityAccessContract {
 		assertEquals(List.of(new ProviderLink("premium", "alice-subject", ALICE, true, 10L, null)), queries.links(ALICE, true));
 		assertEquals(List.of(ALICE, BOB), queries.uniqueIds());
 		assertEquals(List.of(false, true), queries.primaries());
+	}
+
+	@Test
+	void writesAndReadsInstantsToTheMicrosecondAndDates() {
+		AccountEvent login = new AccountEvent("login", ALICE, Instant.parse("2026-11-14T09:30:00.123456789Z"), LocalDate.of(2026, 12, 1));
+		AccountEvent early = new AccountEvent("early", ALICE, Instant.parse("1969-07-20T20:17:40Z"), null);
+		AccountEvent late = new AccountEvent("late", BOB, Instant.parse("9999-12-31T23:59:59.999999Z"), LocalDate.of(9999, 12, 31));
+		events.insertAll(List.of(login, early, late));
+
+		assertEquals(Optional.of(new AccountEvent("login", ALICE, Instant.parse("2026-11-14T09:30:00.123456Z"), LocalDate.of(2026, 12, 1))), events.find("login"));
+		assertEquals(Optional.of(early), events.find("early"));
+		assertEquals(Optional.of(late), events.find("late"));
+
+		Instant moved = Instant.parse("2027-01-02T03:04:05.000006Z");
+		assertEquals(1, events.update("early").set(AccountEventColumns.HAPPENED_AT, moved).set(AccountEventColumns.DUE_ON, LocalDate.of(2027, 1, 2)).execute());
+		assertEquals(Optional.of(new AccountEvent("early", ALICE, moved, LocalDate.of(2027, 1, 2))), events.find("early"));
+	}
+
+	@Test
+	void comparesAndOrdersInstantsAndDatesInTime() {
+		events.insertAll(List.of(
+				new AccountEvent("a", ALICE, Instant.parse("2026-11-14T09:30:00Z"), LocalDate.of(2026, 11, 14)),
+				new AccountEvent("b", ALICE, Instant.parse("2026-11-14T09:30:00.5Z"), LocalDate.of(2026, 2, 1)),
+				new AccountEvent("c", BOB, Instant.parse("2026-11-14T10:00:00Z"), null),
+				new AccountEvent("d", BOB, Instant.parse("2025-01-01T00:00:00Z"), LocalDate.of(2027, 1, 1))
+		));
+		Instant now = Instant.parse("2026-11-14T09:30:00.5Z");
+
+		assertEquals(List.of("d", "a", "b", "c"), eventKeys(events.query(AccountEventColumns.EVENT_KEY.isNotNull()).orderBy(AccountEventColumns.HAPPENED_AT.ascending()).list()));
+		assertEquals(List.of("d", "a"), eventKeys(events.query(AccountEventColumns.HAPPENED_AT.below(now)).orderBy(AccountEventColumns.HAPPENED_AT.ascending()).list()));
+		assertEquals(List.of("b", "c"), eventKeys(events.query(AccountEventColumns.HAPPENED_AT.atLeast(now)).orderBy(AccountEventColumns.EVENT_KEY.ascending()).list()));
+		assertEquals(List.of("b"), eventKeys(events.query(AccountEventColumns.HAPPENED_AT.is(now)).list()));
+		assertEquals(List.of("d", "a"), eventKeys(events.query(AccountEventColumns.DUE_ON.above(LocalDate.of(2026, 6, 1))).orderBy(AccountEventColumns.DUE_ON.descending()).list()));
+		assertEquals(List.of("b", "a"), eventKeys(events.query(AccountEventColumns.DUE_ON.atMost(LocalDate.of(2026, 11, 14))).orderBy(AccountEventColumns.DUE_ON.ascending()).list()));
+		assertEquals(2, events.delete(AccountEventColumns.UNIQUE_ID.is(ALICE).and(AccountEventColumns.HAPPENED_AT.atMost(now))));
+		assertEquals(List.of("c", "d"), eventKeys(events.query(AccountEventColumns.EVENT_KEY.isNotNull()).orderBy(AccountEventColumns.EVENT_KEY.ascending()).list()));
+	}
+
+	@Test
+	void bindsAndMapsInstantsAndDatesInHandWrittenQueries() {
+		Instant happenedAt = Instant.parse("2026-11-14T09:30:00.25Z");
+		events.insert(new AccountEvent("login", ALICE, happenedAt, LocalDate.of(2026, 12, 1)));
+
+		Instant read = jdbi.withHandle(handle -> handle.createQuery("SELECT happened_at FROM identica_account_events WHERE happened_at = :at AND due_on = :on")
+				.bind("at", happenedAt)
+				.bind("on", LocalDate.of(2026, 12, 1))
+				.mapTo(Instant.class)
+				.one());
+		assertEquals(happenedAt, read);
+	}
+
+	private static List<String> eventKeys(List<AccountEvent> stored) {
+		return stored.stream().map(AccountEvent::eventKey).toList();
 	}
 
 	private void insertReservations() {
