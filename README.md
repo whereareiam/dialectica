@@ -123,7 +123,8 @@ public record Note(
 
 `@Default` is written as text and read by the field's type: `true` or `false` for a `boolean`, a
 decimal number in range for a `long` or an `int`, text for a `String`, at most its `@Length`, and a
-36-character UUID for a `UUID`. Any other value is refused when the entity is read. A default lets
+36-character UUID for a `UUID`. `Instant` and `LocalDate` fields take no default. Any other value is
+refused when the entity is read. A default lets
 an `AddColumn` add a `NOT NULL` column to a table that already holds rows. MySQL accepts the default
 of a `String` field without `@Length` only as an expression, which needs MySQL 8.0.13 or newer.
 
@@ -139,6 +140,14 @@ annotation is stored `NOT NULL`. Key fields and primitive fields cannot be nulla
 | `long`, `Long` | `bigint()` | `INTEGER` | `BIGINT` | `BIGINT` | `BIGINT` |
 | `int`, `Integer` | `integer()` | `INTEGER` | `INTEGER` | `INTEGER` | `INT` |
 | `boolean`, `Boolean` | `bool()` | `INTEGER` | `BOOLEAN` | `BOOLEAN` | `BOOLEAN` |
+| `Instant` | `instant()` | `TEXT` | `TIMESTAMP WITH TIME ZONE` | `TIMESTAMP WITH TIME ZONE` | `DATETIME(6)` |
+| `LocalDate` | `date()` | `TEXT` | `DATE` | `DATE` | `DATE` |
+
+An `Instant` is stored to the microsecond; finer parts are cut off before it is written, the same
+on every database. MySQL and MariaDB hold it as the date and time in UTC, in a `DATETIME(6)` rather
+than a `TIMESTAMP`, which ends in 2038. SQLite holds instants as ISO-8601 text of a fixed width in
+UTC, `2026-11-14T09:30:00.000000Z`, and dates as `2026-11-14`, so both sort in time order as text.
+Every database holds the years 1000 to 9999.
 
 Any other field type is refused, and so is any other mistake. `Dialectica.entity(...)` throws
 an `IllegalArgumentException` that names the entity and the field.
@@ -278,8 +287,8 @@ links.upsert(link, ProviderLinkColumns.IS_PRIMARY, ProviderLinkColumns.LAST_SEEN
 
 `DialecticaPlugin` reads the dialect from a connection when it is installed, or takes one:
 `new DialecticaPlugin(dialect)`. It binds and maps `UUID` and `Boolean` values the way the
-database stores them, so a UUID is text on SQLite and `CHAR(36)` on MySQL. This also applies to
-hand-written queries. `find`, `update(key...)`, `delete(key...)`, `upsert` and `replace` need a
+database stores them, so a UUID is text on SQLite and `CHAR(36)` on MySQL. It does the same for
+`Instant` and `LocalDate` values. This also applies to hand-written queries. `find`, `update(key...)`, `delete(key...)`, `upsert` and `replace` need a
 primary key; queries, updates and deletes by a condition do not. A key is given as the values of
 its columns in key order and checked against their types when the call runs.
 
@@ -317,7 +326,7 @@ Where<StoreEntry> expired = StoreEntryColumns.STORE_NAME.is(store)
 | `and(other)`, `or(other)`, `not()` | `AND`, `OR`, `NOT (...)` |
 
 `below`, `above`, `atMost`, `atLeast`, `ascending()` and `descending()` need a column with an
-order: numbers, and text, which compares by the database's collation, so MySQL and MariaDB ignore
+order: numbers, instants and dates in time, and text, which compares by the database's collation, so MySQL and MariaDB ignore
 case by default while the others do not. UUID and boolean columns have none. Conditions compare as
 SQL does: a column that is `NULL` meets no comparison with a value, `isNot` included, and neither
 does its negation; `isNull` and `isNotNull` test for it. A value has to have the column's Java type,

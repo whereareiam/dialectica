@@ -4,7 +4,7 @@ version: 5.0.0
 
 # Dialectica 5.0.0 - Queries and Conditions
 
-Entities can now be queried, updated and deleted by conditions on any column, not only by their primary key: conditions are `Where` values built from typed columns, which a new annotation processor writes for every entity, and queries order, page, count and stream their rows. Calls can share a transaction, and many entities can be inserted or upserted as one batch.
+Entities can now be queried, updated and deleted by conditions on any column, not only by their primary key: conditions are `Where` values built from typed columns, which a new annotation processor writes for every entity, and queries order, page, count and stream their rows. Calls can share a transaction, and many entities can be inserted or upserted as one batch. Entity fields can now be `Instant` and `LocalDate`, stored natively and compared in time.
 
 ## Upgrading
 
@@ -25,6 +25,8 @@ Add the processor next to the adapter, `annotationProcessor("me.whereareiam:dial
 | a loop of `insert` or `upsert` calls | `access.insertAll(entities)`, `access.upsertAll(entities)` or `upsertAll(entities, columns...)`, in one transaction |
 | `jdbi.useTransaction(handle -> …)` around hand-written SQL | `jdbi.useTransaction(handle -> access.on(handle)…)` |
 
+`Instant` fields become `instant()` columns: `TIMESTAMP WITH TIME ZONE` on PostgreSQL and H2, `DATETIME(6)` in UTC on MySQL and MariaDB, and fixed-width ISO-8601 text on SQLite, written to the microsecond. `LocalDate` fields become `date()` columns: `DATE`, and ISO-8601 text on SQLite. Both order in `Where` and `orderBy`, and `DialecticaPlugin` binds and maps them in hand-written queries too. A project that stored times as `long` epoch milliseconds keeps those columns as they are; moving one to `Instant` changes its column type, which needs a migration of the stored values.
+
 `EntityAccess.of`, `insert`, `insertIfAbsent`, `upsert(entity)`, `upsert(entity, EntityColumn...)`, `replace`, `find(key...)` and `delete(key...)` keep their form; keys are still the values of the key columns in key order. Ordered comparisons now apply to text columns as well as numbers, by the database's collation.
 
 A third-party dialect's `StatementRenderer` changes:
@@ -37,4 +39,4 @@ A third-party dialect's `StatementRenderer` changes:
 | `delete(table)` | `delete(table, condition)` |
 | | `count(table, condition)` and `exists(table, condition)` are new |
 
-`AnsiStatementRenderer` implements them all and renders limits and offsets as the ANSI `OFFSET n ROWS FETCH FIRST m ROWS ONLY`; override `range(limit, offset)` for a database that writes them otherwise, as MySQL, MariaDB and SQLite do with `LIMIT m OFFSET n`. `Comparison` gains `NOT_EQUALS` and `IS_NOT_NULL`, and `Comparison.orders(type)` tells which column types ordered comparisons accept.
+`AnsiStatementRenderer` implements them all and renders limits and offsets as the ANSI `OFFSET n ROWS FETCH FIRST m ROWS ONLY`; override `range(limit, offset)` for a database that writes them otherwise, as MySQL, MariaDB and SQLite do with `LIMIT m OFFSET n`. `Comparison` gains `NOT_EQUALS` and `IS_NOT_NULL`, and `Comparison.orders(type)` tells which column types ordered comparisons accept. `ColumnType` gains `InstantType` and `DateType`: a third-party schema renderer maps them to its own types, and `AnsiDialect` binds and reads them through `bindInstant`, `readInstant`, `bindDate` and `readDate`, which a dialect overrides to store them otherwise.
