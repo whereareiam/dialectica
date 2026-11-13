@@ -4,7 +4,8 @@ plugins {
 }
 
 // The bundle has no code of its own: it is Dialectica with every dialect, as one dependency. Its
-// tests run the schema writer against all five databases.
+// tests run the schema writer against all five databases. Its test fixtures get their typed columns
+// from the processor, which the adapters' tests use.
 dependencies {
     api(project(":dialectica"))
     api(project(":dialectica-dialect:dialect-h2"))
@@ -15,6 +16,7 @@ dependencies {
 
     testFixturesApi(project(":dialectica-api"))
     testFixturesCompileOnly(rootProject.libs.lombok)
+    testFixturesAnnotationProcessor(project(":dialectica-processor"))
     testFixturesAnnotationProcessor(rootProject.libs.lombok)
 
     testImplementation(rootProject.libs.h2)

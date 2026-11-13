@@ -8,13 +8,15 @@ import me.whereareiam.dialectica.schema.TableDefinition;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.List;
+import java.util.OptionalLong;
 
 /**
  * Renders MySQL's entity statements. An upsert of a table without other unique keys is an
  * {@code INSERT ... ON DUPLICATE KEY UPDATE} that reads the inserted values through the row alias
  * {@code excluded}, which needs MySQL 8.0.19 or newer; of any other table, an insert followed by an
  * update. An insert if absent is a plain insert: {@code INSERT IGNORE} would also skip or alter rows
- * for other errors, and {@code ON DUPLICATE KEY UPDATE} reports a kept row like an inserted one.
+ * for other errors, and {@code ON DUPLICATE KEY UPDATE} reports a kept row like an inserted one. A
+ * select's range is {@code LIMIT m OFFSET n}.
  */
 public class MysqlStatementRenderer extends AnsiStatementRenderer {
 	/**
@@ -48,6 +50,20 @@ public class MysqlStatementRenderer extends AnsiStatementRenderer {
 
 		return new Upsert.OnConflict(new SqlStatement(insert(table).getSql() + " " + rowAlias() + "ON DUPLICATE KEY UPDATE " + assignments,
 				columns(table)));
+	}
+
+	/**
+	 * {@inheritDoc}
+	 * <p>
+	 * MySQL and MariaDB write {@code LIMIT m OFFSET n}. An offset needs a limit, so an offset over
+	 * every row limits to the largest number of rows MySQL takes.
+	 */
+	@Override
+	protected @NotNull String range(@NotNull OptionalLong limit, long offset) {
+		if (limit.isEmpty() && offset == 0) return "";
+
+		String rows = limit.isPresent() ? Long.toString(limit.getAsLong()) : "18446744073709551615";
+		return " LIMIT " + rows + (offset > 0 ? " OFFSET " + offset : "");
 	}
 
 	/**

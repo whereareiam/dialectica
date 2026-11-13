@@ -1,8 +1,9 @@
 package me.whereareiam.dialectica.common.dialect;
 
 import me.whereareiam.dialectica.Dialect;
-import me.whereareiam.dialectica.dialect.Comparison;
 import me.whereareiam.dialectica.dialect.Condition;
+import me.whereareiam.dialectica.dialect.Ordering;
+import me.whereareiam.dialectica.dialect.Selection;
 import me.whereareiam.dialectica.dialect.SqlStatement;
 import me.whereareiam.dialectica.dialect.StatementRenderer;
 import me.whereareiam.dialectica.dialect.Upsert;
@@ -14,6 +15,7 @@ import org.jetbrains.annotations.NotNull;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.StringJoiner;
 import java.util.function.Function;
@@ -21,7 +23,8 @@ import java.util.function.Function;
 /**
  * Renders the entity statements every supported dialect shares. Upserts and inserts if absent
  * differ between dialects, so each dialect's renderer supplies its own from the forms rendered
- * here.
+ * here. A select's range renders as the ANSI {@code OFFSET n ROWS FETCH FIRST m ROWS ONLY} unless
+ * the dialect {@linkplain #range(OptionalLong, long) renders its own}.
  */
 public abstract class AnsiStatementRenderer implements StatementRenderer {
 	private final @NotNull Dialect dialect;
@@ -54,41 +57,65 @@ public abstract class AnsiStatementRenderer implements StatementRenderer {
 	}
 
 	@Override
-	public @NotNull SqlStatement update(
-			@NotNull TableDefinition table,
-			@NotNull List<String> columns,
-			@NotNull List<Condition> conditions
-	) {
-		requireKey(table);
+	public @NotNull SqlStatement update(@NotNull TableDefinition table, @NotNull List<String> columns, @NotNull Condition condition) {
 		if (columns.isEmpty())
 			throw new IllegalArgumentException("An update of " + table.getName() + " needs a column to set");
 		requireSettable(table, columns);
-		requireConditions(table, conditions);
 
 		List<String> parameters = new ArrayList<>(columns);
-		parameters.addAll(table.getPrimaryKey());
+		String where = where(table, condition, parameters);
 
-		StringBuilder sql = new StringBuilder("UPDATE ").append(identifier(table.getName()))
-				.append(" SET ").append(join(columns, ", ", column -> identifier(column) + " = ?"))
-				.append(" WHERE ").append(keyCondition(table));
-		for (Condition condition : conditions) {
-			sql.append(" AND ").append(identifier(condition.getColumn())).append(' ').append(operator(condition.getComparison()));
-			if (condition.getComparison().takesValue())
-				parameters.add(condition.getColumn());
-		}
-
-		return new SqlStatement(sql.toString(), parameters);
+		return new SqlStatement("UPDATE " + identifier(table.getName()) + " SET " + join(columns, ", ", column -> identifier(column) + " = ?")
+				+ where, parameters);
 	}
 
 	@Override
-	public @NotNull SqlStatement select(@NotNull TableDefinition table) {
+	public @NotNull SqlStatement select(@NotNull TableDefinition table, @NotNull Selection selection) {
+		List<String> parameters = new ArrayList<>();
+		String where = where(table, selection.getCondition(), parameters);
+
 		return new SqlStatement("SELECT " + join(columns(table), ", ", this::identifier) + " FROM " + identifier(table.getName())
-				+ " WHERE " + keyCondition(table), table.getPrimaryKey());
+				+ where + orderBy(table, selection.getOrderings()) + range(selection.getLimit(), selection.getOffset()), parameters);
 	}
 
 	@Override
-	public @NotNull SqlStatement delete(@NotNull TableDefinition table) {
-		return new SqlStatement("DELETE FROM " + identifier(table.getName()) + " WHERE " + keyCondition(table), table.getPrimaryKey());
+	public @NotNull SqlStatement count(@NotNull TableDefinition table, @NotNull Condition condition) {
+		List<String> parameters = new ArrayList<>();
+		String where = where(table, condition, parameters);
+
+		return new SqlStatement("SELECT COUNT(*) FROM " + identifier(table.getName()) + where, parameters);
+	}
+
+	@Override
+	public @NotNull SqlStatement exists(@NotNull TableDefinition table, @NotNull Condition condition) {
+		List<String> parameters = new ArrayList<>();
+		String where = where(table, condition, parameters);
+
+		return new SqlStatement("SELECT 1 FROM " + identifier(table.getName()) + where + range(OptionalLong.of(1), 0), parameters);
+	}
+
+	@Override
+	public @NotNull SqlStatement delete(@NotNull TableDefinition table, @NotNull Condition condition) {
+		List<String> parameters = new ArrayList<>();
+		String where = where(table, condition, parameters);
+
+		return new SqlStatement("DELETE FROM " + identifier(table.getName()) + where, parameters);
+	}
+
+	/**
+	 * Renders the range of a select after its ordering, with a leading space, or nothing for every
+	 * row. The ANSI form, which PostgreSQL and H2 speak, is {@code OFFSET n ROWS FETCH FIRST m ROWS
+	 * ONLY}, leaving out the part that does not apply.
+	 *
+	 * @param limit  largest number of rows, or empty for every row
+	 * @param offset number of rows to skip
+	 * @return the range clause
+	 */
+	protected @NotNull String range(@NotNull OptionalLong limit, long offset) {
+		String skip = offset > 0 ? " OFFSET " + offset + " ROWS" : "";
+		if (limit.isEmpty()) return skip;
+
+		return skip + " FETCH FIRST " + limit.getAsLong() + " ROWS ONLY";
 	}
 
 	/**
@@ -260,39 +287,12 @@ public abstract class AnsiStatementRenderer implements StatementRenderer {
 		}
 	}
 
-	private static void requireConditions(TableDefinition table, List<Condition> conditions) {
-		Set<Condition> seen = new HashSet<>();
-		for (Condition condition : conditions) {
-			ColumnDefinition column = requireColumn(table, condition.getColumn());
-			if (!seen.add(condition))
-				throw new IllegalArgumentException("Condition " + condition + " on " + table.getName() + " is given twice");
-			if (condition.getComparison().isOrdered() && !holdsNumbers(column.getType()))
-				throw new IllegalArgumentException("Column " + column.getName() + " of " + table.getName() + " holds " + column.getType()
-						+ ", which cannot be compared " + condition.getComparison() + "; ordered conditions compare number columns");
-		}
-	}
-
 	private static ColumnDefinition requireColumn(TableDefinition table, String name) {
 		ColumnDefinition column = table.column(name);
 		if (column == null)
 			throw new IllegalArgumentException("Table " + table.getName() + " has no column " + name);
 
 		return column;
-	}
-
-	private static boolean holdsNumbers(ColumnType type) {
-		return type instanceof ColumnType.BigintType || type instanceof ColumnType.IntegerType;
-	}
-
-	private static String operator(Comparison comparison) {
-		return switch (comparison) {
-			case EQUALS -> "= ?";
-			case IS_NULL -> "IS NULL";
-			case BELOW -> "< ?";
-			case ABOVE -> "> ?";
-			case AT_MOST -> "<= ?";
-			case AT_LEAST -> ">= ?";
-		};
 	}
 
 	private String columnList(TableDefinition table) {
@@ -303,5 +303,21 @@ public abstract class AnsiStatementRenderer implements StatementRenderer {
 		requireKey(table);
 
 		return join(table.getPrimaryKey(), " AND ", column -> identifier(column) + " = ?");
+	}
+
+	private String where(TableDefinition table, Condition condition, List<String> parameters) {
+		return " WHERE " + condition.accept(new ConditionWriter(table, this::identifier, parameters));
+	}
+
+	private String orderBy(TableDefinition table, List<Ordering> orderings) {
+		if (orderings.isEmpty()) return "";
+
+		StringJoiner joiner = new StringJoiner(", ", " ORDER BY ", "");
+		for (Ordering ordering : orderings) {
+			ConditionWriter.requireOrdered(table, ordering.getColumn(), "ordered by");
+			joiner.add(identifier(ordering.getColumn()) + (ordering.getDirection() == Ordering.Direction.ASCENDING ? " ASC" : " DESC"));
+		}
+
+		return joiner.toString();
 	}
 }

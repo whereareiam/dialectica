@@ -2,11 +2,15 @@ package me.whereareiam.dialectica.adapter.jdbi.entity;
 
 import me.whereareiam.dialectica.Dialectica;
 import me.whereareiam.dialectica.adapter.jdbi.DialecticaPlugin;
-import me.whereareiam.dialectica.fixture.Account;
-import me.whereareiam.dialectica.fixture.AccountReservation;
-import me.whereareiam.dialectica.fixture.ProviderLink;
 import me.whereareiam.dialectica.entity.EntityColumn;
+import me.whereareiam.dialectica.entity.Where;
 import me.whereareiam.dialectica.exception.KeyConflictException;
+import me.whereareiam.dialectica.fixture.Account;
+import me.whereareiam.dialectica.fixture.AccountColumns;
+import me.whereareiam.dialectica.fixture.AccountReservation;
+import me.whereareiam.dialectica.fixture.AccountReservationColumns;
+import me.whereareiam.dialectica.fixture.ProviderLink;
+import me.whereareiam.dialectica.fixture.ProviderLinkColumns;
 import me.whereareiam.dialectica.schema.Schema;
 import me.whereareiam.dialectica.schema.change.DropTable;
 import org.jdbi.v3.core.Jdbi;
@@ -28,6 +32,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import static me.whereareiam.dialectica.fixture.AccountColumns.LAST_SEEN_AT;
+import static me.whereareiam.dialectica.fixture.AccountColumns.USERNAME;
+import static me.whereareiam.dialectica.fixture.AccountReservationColumns.CREATED_AT;
+import static me.whereareiam.dialectica.fixture.AccountReservationColumns.EXPIRES_AT;
+import static me.whereareiam.dialectica.fixture.AccountReservationColumns.RESERVATION_KEY;
+import static me.whereareiam.dialectica.fixture.ProviderLinkColumns.IS_PRIMARY;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -106,10 +116,7 @@ abstract class EntityAccessContract {
 		reservations.upsert(new AccountReservation("name:alice", BOB, 3L, 4L));
 
 		assertEquals(Optional.of(new AccountReservation("name:alice", BOB, 3L, 4L)), reservations.find("name:alice"));
-		long rows = jdbi.withHandle(handle -> handle.createQuery("SELECT COUNT(*) FROM identica_account_reservations")
-				.mapTo(Long.class)
-				.one());
-		assertEquals(1, rows);
+		assertEquals(1, reservations.query(RESERVATION_KEY.isNotNull()).count());
 	}
 
 	@Test
@@ -160,15 +167,14 @@ abstract class EntityAccessContract {
 	}
 
 	@Test
-	@SuppressWarnings("unchecked")
 	void upsertsOnlyTheColumnsItNames() {
 		accounts.insert(new Account(ALICE, "Alice", null, null));
-		EntityColumn<ProviderLink, Long> lastSeenAt = (EntityColumn<ProviderLink, Long>) links.table().column("last_seen_at");
+		EntityColumn<ProviderLink, Long> lastSeenAt = links.column("last_seen_at", Long.class);
 
-		links.upsert(new ProviderLink("premium", "alice-subject", ALICE, true, 10L, 11L), "is_primary", "last_seen_at");
+		links.upsert(new ProviderLink("premium", "alice-subject", ALICE, true, 10L, 11L), IS_PRIMARY, ProviderLinkColumns.LAST_SEEN_AT);
 		assertEquals(Optional.of(new ProviderLink("premium", "alice-subject", ALICE, true, 10L, 11L)), links.find("premium", "alice-subject"));
 
-		links.upsert(new ProviderLink("premium", "alice-subject", ALICE, false, 20L, 21L), "is_primary", "last_seen_at");
+		links.upsert(new ProviderLink("premium", "alice-subject", ALICE, false, 20L, 21L), IS_PRIMARY, ProviderLinkColumns.LAST_SEEN_AT);
 		assertEquals(Optional.of(new ProviderLink("premium", "alice-subject", ALICE, false, 10L, 21L)), links.find("premium", "alice-subject"));
 
 		links.upsert(new ProviderLink("premium", "alice-subject", ALICE, true, 30L, 31L), lastSeenAt);
@@ -186,7 +192,7 @@ abstract class EntityAccessContract {
 		ProviderLink second = new ProviderLink("premium", "other-subject", ALICE, false, 20L, 21L);
 
 		assertThrows(KeyConflictException.class, () -> links.upsert(second));
-		KeyConflictException conflict = assertThrows(KeyConflictException.class, () -> links.upsert(second, "is_primary", "last_seen_at"));
+		KeyConflictException conflict = assertThrows(KeyConflictException.class, () -> links.upsert(second, IS_PRIMARY, ProviderLinkColumns.LAST_SEEN_AT));
 		assertEquals("identica_provider_links", conflict.getTable());
 
 		assertEquals(Optional.of(link), links.find("premium", "alice-subject"));
@@ -203,7 +209,7 @@ abstract class EntityAccessContract {
 		links.insert(bob);
 
 		KeyConflictException conflict = assertThrows(KeyConflictException.class,
-				() -> links.update("premium", "bob-subject").set("unique_id", ALICE).execute());
+				() -> links.update("premium", "bob-subject").set(ProviderLinkColumns.UNIQUE_ID, ALICE).execute());
 		assertEquals("identica_provider_links", conflict.getTable());
 
 		assertEquals(Optional.of(alice), links.find("premium", "alice-subject"));
@@ -223,7 +229,7 @@ abstract class EntityAccessContract {
 					long seenAt = contender;
 					upserts.add(executor.submit(() -> {
 						start.await(10, TimeUnit.SECONDS);
-						links.upsert(new ProviderLink("premium", subject, ALICE, false, 5L, seenAt), "last_seen_at");
+						links.upsert(new ProviderLink("premium", subject, ALICE, false, 5L, seenAt), ProviderLinkColumns.LAST_SEEN_AT);
 						return null;
 					}));
 				}
@@ -243,14 +249,15 @@ abstract class EntityAccessContract {
 	@Test
 	@SuppressWarnings({"unchecked", "rawtypes"})
 	void refusesUpsertsThatDoNotFitTheTable() {
-		EntityColumn<ProviderLink, Boolean> foreign = (EntityColumn) accounts.table().column("username");
+		EntityColumn<ProviderLink, String> foreign = (EntityColumn) USERNAME;
 		ProviderLink link = new ProviderLink("premium", "alice-subject", ALICE, true, 10L, null);
 
-		assertThrows(IllegalArgumentException.class, () -> links.upsert(link, "missing"));
-		assertThrows(IllegalArgumentException.class, () -> links.upsert(link, "provider_id"));
-		assertThrows(IllegalArgumentException.class, () -> links.upsert(link, "is_primary", "is_primary"));
-		assertThrows(IllegalArgumentException.class, () -> links.upsert(link, new String[0]));
+		assertThrows(IllegalArgumentException.class, () -> links.upsert(link, ProviderLinkColumns.PROVIDER_ID));
+		assertThrows(IllegalArgumentException.class, () -> links.upsert(link, IS_PRIMARY, IS_PRIMARY));
+		assertThrows(IllegalArgumentException.class, () -> links.upsert(link, new EntityColumn[0]));
 		assertThrows(IllegalArgumentException.class, () -> links.upsert(link, foreign));
+		assertThrows(IllegalArgumentException.class, () -> links.column("missing", Long.class));
+		assertThrows(IllegalArgumentException.class, () -> links.column("last_seen_at", String.class));
 		assertEquals(Optional.empty(), links.find("premium", "alice-subject"));
 	}
 
@@ -269,72 +276,76 @@ abstract class EntityAccessContract {
 	void updatesOnlyTheColumnsItSets() {
 		accounts.insert(new Account(ALICE, "Alice", 1L, null));
 
-		assertTrue(accounts.update(ALICE).set("last_seen_at", 5L).execute());
-		assertTrue(accounts.update(ALICE).set("username", "Alicia").set("created_at", null).execute());
-		assertFalse(accounts.update(BOB).set("last_seen_at", 5L).execute());
+		assertEquals(1, accounts.update(ALICE).set(LAST_SEEN_AT, 5L).execute());
+		assertEquals(1, accounts.update(ALICE).set(USERNAME, "Alicia").set(AccountColumns.CREATED_AT, null).execute());
+		assertEquals(0, accounts.update(BOB).set(LAST_SEEN_AT, 5L).execute());
 
 		assertEquals(Optional.of(new Account(ALICE, "Alicia", null, 5L)), accounts.find(ALICE));
 		assertEquals(Optional.empty(), accounts.find(BOB));
 	}
 
 	@Test
-	@SuppressWarnings("unchecked")
-	void updatesByACompositeKeyThroughTypedColumns() {
+	void updatesByACompositeKeyWithAGuard() {
 		accounts.insert(new Account(ALICE, "Alice", null, null));
 		links.insert(new ProviderLink("premium", "alice-subject", ALICE, true, 10L, null));
 		links.insert(new ProviderLink("credential", "alice", ALICE, false, null, null));
-		EntityColumn<ProviderLink, Boolean> primary = (EntityColumn<ProviderLink, Boolean>) links.table().column("is_primary");
-		EntityColumn<ProviderLink, Long> lastSeenAt = (EntityColumn<ProviderLink, Long>) links.table().column("last_seen_at");
 
-		assertTrue(links.update("credential", "alice").set(primary, true).set(lastSeenAt, 30L).when(primary, false).execute());
-		assertTrue(links.update("premium", "alice-subject").set(primary, false).execute());
+		assertEquals(1, links.update("credential", "alice").set(IS_PRIMARY, true).set(ProviderLinkColumns.LAST_SEEN_AT, 30L).when(IS_PRIMARY.is(false)).execute());
+		assertEquals(1, links.update("premium", "alice-subject").set(IS_PRIMARY, false).execute());
 
 		assertEquals(Optional.of(new ProviderLink("credential", "alice", ALICE, true, null, 30L)), links.find("credential", "alice"));
 		assertEquals(Optional.of(new ProviderLink("premium", "alice-subject", ALICE, false, 10L, null)), links.find("premium", "alice-subject"));
 	}
 
 	@Test
-	void updatesOnlyWhileTheConditionsHold() {
+	void updatesOnlyWhileTheGuardsHold() {
 		reservations.insert(new AccountReservation("recovery:alice", ALICE, 1L, 0L));
 
-		assertTrue(reservations.update("recovery:alice").set("expires_at", 7L).when("expires_at", 0L).execute());
-		assertFalse(reservations.update("recovery:alice").set("expires_at", 8L).when("expires_at", 0L).execute());
-		assertFalse(reservations.update("recovery:alice").set("expires_at", 9L).when("expires_at", 7L).when("unique_id", BOB).execute());
+		assertEquals(1, reservations.update("recovery:alice").set(EXPIRES_AT, 7L).when(EXPIRES_AT.is(0L)).execute());
+		assertEquals(0, reservations.update("recovery:alice").set(EXPIRES_AT, 8L).when(EXPIRES_AT.is(0L)).execute());
+		assertEquals(0, reservations.update("recovery:alice").set(EXPIRES_AT, 9L)
+				.when(EXPIRES_AT.is(7L))
+				.when(AccountReservationColumns.UNIQUE_ID.is(BOB))
+				.execute());
+		assertEquals(1, reservations.update("recovery:alice").set(EXPIRES_AT, 10L)
+				.when(AccountReservationColumns.UNIQUE_ID.is(BOB).or(EXPIRES_AT.is(7L)))
+				.execute());
 
-		assertEquals(Optional.of(new AccountReservation("recovery:alice", ALICE, 1L, 7L)), reservations.find("recovery:alice"));
+		assertEquals(Optional.of(new AccountReservation("recovery:alice", ALICE, 1L, 10L)), reservations.find("recovery:alice"));
 	}
 
 	@Test
-	void comparesWithNullAsIsNull() {
+	void guardsOnNullWithIsNull() {
 		accounts.insert(new Account(ALICE, "Alice", 1L, null));
 
-		assertTrue(accounts.update(ALICE).set("last_seen_at", 5L).when("last_seen_at", null).execute());
-		assertFalse(accounts.update(ALICE).set("last_seen_at", 6L).when("last_seen_at", null).execute());
+		assertEquals(1, accounts.update(ALICE).set(LAST_SEEN_AT, 5L).when(LAST_SEEN_AT.isNull()).execute());
+		assertEquals(0, accounts.update(ALICE).set(LAST_SEEN_AT, 6L).when(LAST_SEEN_AT.isNull()).execute());
+		assertEquals(1, accounts.update(ALICE).set(LAST_SEEN_AT, 7L).when(LAST_SEEN_AT.isNotNull()).execute());
 
-		assertEquals(Optional.of(new Account(ALICE, "Alice", 1L, 5L)), accounts.find(ALICE));
+		assertEquals(Optional.of(new Account(ALICE, "Alice", 1L, 7L)), accounts.find(ALICE));
 	}
 
 	@Test
-	void letsExactlyOneOfTwoConcurrentConditionalUpdatesWin() throws Exception {
+	void letsExactlyOneOfTwoConcurrentGuardedUpdatesWin() throws Exception {
 		ExecutorService executor = Executors.newFixedThreadPool(2);
 		try {
 			for (int round = 0; round < 20; round++) {
 				reservations.upsert(new AccountReservation("recovery:alice", ALICE, 1L, 0L));
 				CyclicBarrier start = new CyclicBarrier(2);
-				List<Future<Boolean>> updates = new ArrayList<>();
+				List<Future<Integer>> updates = new ArrayList<>();
 				for (long contender = 1; contender <= 2; contender++) {
 					long usedAt = contender;
 					updates.add(executor.submit(() -> {
 						start.await(10, TimeUnit.SECONDS);
-						return reservations.update("recovery:alice").set("expires_at", usedAt).when("expires_at", 0L).execute();
+						return reservations.update("recovery:alice").set(EXPIRES_AT, usedAt).when(EXPIRES_AT.is(0L)).execute();
 					}));
 				}
 
-				boolean first = updates.get(0).get(30, TimeUnit.SECONDS);
-				boolean second = updates.get(1).get(30, TimeUnit.SECONDS);
+				int first = updates.get(0).get(30, TimeUnit.SECONDS);
+				int second = updates.get(1).get(30, TimeUnit.SECONDS);
 
-				assertTrue(first ^ second, "round " + round + ": first " + first + ", second " + second);
-				assertEquals(first ? 1L : 2L, reservations.find("recovery:alice").orElseThrow().expiresAt());
+				assertEquals(1, first + second, "round " + round + ": first " + first + ", second " + second);
+				assertEquals(first == 1 ? 1L : 2L, reservations.find("recovery:alice").orElseThrow().expiresAt());
 			}
 		} finally {
 			executor.shutdownNow();
@@ -342,41 +353,41 @@ abstract class EntityAccessContract {
 	}
 
 	@Test
-	void updatesOnlyWhileAnOrderedConditionHolds() {
+	void updatesOnlyWhileAnOrderedGuardHolds() {
 		reservations.insert(new AccountReservation("totp:alice", ALICE, 1L, 0L));
 
-		assertTrue(reservations.update("totp:alice").set("expires_at", 5L).whenBelow("expires_at", 5L).execute());
-		assertFalse(reservations.update("totp:alice").set("expires_at", 5L).whenBelow("expires_at", 5L).execute());
-		assertFalse(reservations.update("totp:alice").set("expires_at", 4L).whenBelow("expires_at", 4L).execute());
-		assertTrue(reservations.update("totp:alice").set("expires_at", 6L).whenBelow("expires_at", 6L).execute());
+		assertEquals(1, reservations.update("totp:alice").set(EXPIRES_AT, 5L).when(EXPIRES_AT.below(5L)).execute());
+		assertEquals(0, reservations.update("totp:alice").set(EXPIRES_AT, 5L).when(EXPIRES_AT.below(5L)).execute());
+		assertEquals(0, reservations.update("totp:alice").set(EXPIRES_AT, 4L).when(EXPIRES_AT.below(4L)).execute());
+		assertEquals(1, reservations.update("totp:alice").set(EXPIRES_AT, 6L).when(EXPIRES_AT.below(6L)).execute());
 
 		assertEquals(Optional.of(new AccountReservation("totp:alice", ALICE, 1L, 6L)), reservations.find("totp:alice"));
 	}
 
 	@Test
-	@SuppressWarnings("unchecked")
-	void comparesAboveAtMostAndAtLeastThroughNamesAndTypedColumns() {
+	void comparesAboveAtMostAndAtLeast() {
 		reservations.insert(new AccountReservation("totp:alice", ALICE, 1L, 5L));
-		EntityColumn<AccountReservation, Long> expiresAt = (EntityColumn<AccountReservation, Long>) reservations.table().column("expires_at");
 
-		assertFalse(reservations.update("totp:alice").set("created_at", 2L).whenAbove("expires_at", 5L).execute());
-		assertTrue(reservations.update("totp:alice").set("created_at", 2L).whenAbove(expiresAt, 4L).execute());
-		assertFalse(reservations.update("totp:alice").set("created_at", 3L).whenAtMost("expires_at", 4L).execute());
-		assertTrue(reservations.update("totp:alice").set("created_at", 3L).whenAtMost(expiresAt, 5L).execute());
-		assertFalse(reservations.update("totp:alice").set("created_at", 4L).whenAtLeast("expires_at", 6L).execute());
-		assertTrue(reservations.update("totp:alice").set("created_at", 4L).whenAtLeast(expiresAt, 5L).execute());
-		assertFalse(reservations.update("totp:alice").set("created_at", 5L).whenAtLeast("expires_at", 1L).whenBelow("expires_at", 5L).execute());
-		assertTrue(reservations.update("totp:alice").set("created_at", 5L).whenAtLeast("expires_at", 1L).whenBelow(expiresAt, 6L).execute());
+		assertEquals(0, reservations.update("totp:alice").set(CREATED_AT, 2L).when(EXPIRES_AT.above(5L)).execute());
+		assertEquals(1, reservations.update("totp:alice").set(CREATED_AT, 2L).when(EXPIRES_AT.above(4L)).execute());
+		assertEquals(0, reservations.update("totp:alice").set(CREATED_AT, 3L).when(EXPIRES_AT.atMost(4L)).execute());
+		assertEquals(1, reservations.update("totp:alice").set(CREATED_AT, 3L).when(EXPIRES_AT.atMost(5L)).execute());
+		assertEquals(0, reservations.update("totp:alice").set(CREATED_AT, 4L).when(EXPIRES_AT.atLeast(6L)).execute());
+		assertEquals(1, reservations.update("totp:alice").set(CREATED_AT, 4L).when(EXPIRES_AT.atLeast(5L)).execute());
+		assertEquals(0, reservations.update("totp:alice").set(CREATED_AT, 5L).when(EXPIRES_AT.atLeast(1L).and(EXPIRES_AT.below(5L))).execute());
+		assertEquals(1, reservations.update("totp:alice").set(CREATED_AT, 5L).when(EXPIRES_AT.atLeast(1L).and(EXPIRES_AT.below(6L))).execute());
 
 		assertEquals(Optional.of(new AccountReservation("totp:alice", ALICE, 5L, 5L)), reservations.find("totp:alice"));
 	}
 
 	@Test
-	void meetsNoOrderedConditionWhileTheColumnIsNull() {
+	void meetsNoComparisonWhileTheColumnIsNull() {
 		accounts.insert(new Account(ALICE, "Alice", 1L, null));
 
-		assertFalse(accounts.update(ALICE).set("last_seen_at", 5L).whenBelow("last_seen_at", 5L).execute());
-		assertFalse(accounts.update(ALICE).set("last_seen_at", 5L).whenAtLeast("last_seen_at", Long.MIN_VALUE).execute());
+		assertEquals(0, accounts.update(ALICE).set(LAST_SEEN_AT, 5L).when(LAST_SEEN_AT.below(5L)).execute());
+		assertEquals(0, accounts.update(ALICE).set(LAST_SEEN_AT, 5L).when(LAST_SEEN_AT.atLeast(Long.MIN_VALUE)).execute());
+		assertEquals(0, accounts.update(ALICE).set(LAST_SEEN_AT, 5L).when(LAST_SEEN_AT.isNot(3L)).execute());
+		assertEquals(0, accounts.update(ALICE).set(LAST_SEEN_AT, 5L).when(LAST_SEEN_AT.is(3L).not()).execute());
 
 		assertEquals(Optional.of(new Account(ALICE, "Alice", 1L, null)), accounts.find(ALICE));
 	}
@@ -388,20 +399,20 @@ abstract class EntityAccessContract {
 			for (int round = 0; round < 20; round++) {
 				reservations.upsert(new AccountReservation("totp:alice", ALICE, 0L, 4L));
 				CyclicBarrier start = new CyclicBarrier(2);
-				List<Future<Boolean>> updates = new ArrayList<>();
+				List<Future<Integer>> updates = new ArrayList<>();
 				for (long contender = 1; contender <= 2; contender++) {
 					long winner = contender;
 					updates.add(executor.submit(() -> {
 						start.await(10, TimeUnit.SECONDS);
-						return reservations.update("totp:alice").set("expires_at", 5L).set("created_at", winner).whenBelow("expires_at", 5L).execute();
+						return reservations.update("totp:alice").set(EXPIRES_AT, 5L).set(CREATED_AT, winner).when(EXPIRES_AT.below(5L)).execute();
 					}));
 				}
 
-				boolean first = updates.get(0).get(30, TimeUnit.SECONDS);
-				boolean second = updates.get(1).get(30, TimeUnit.SECONDS);
+				int first = updates.get(0).get(30, TimeUnit.SECONDS);
+				int second = updates.get(1).get(30, TimeUnit.SECONDS);
 
-				assertTrue(first ^ second, "round " + round + ": first " + first + ", second " + second);
-				assertEquals(new AccountReservation("totp:alice", ALICE, first ? 1L : 2L, 5L), reservations.find("totp:alice").orElseThrow());
+				assertEquals(1, first + second, "round " + round + ": first " + first + ", second " + second);
+				assertEquals(new AccountReservation("totp:alice", ALICE, first == 1 ? 1L : 2L, 5L), reservations.find("totp:alice").orElseThrow());
 			}
 		} finally {
 			executor.shutdownNow();
@@ -409,25 +420,164 @@ abstract class EntityAccessContract {
 	}
 
 	@Test
+	@SuppressWarnings({"unchecked", "rawtypes"})
 	void refusesUpdatesThatDoNotFitTheTable() {
-		@SuppressWarnings({"unchecked", "rawtypes"})
-		EntityColumn<Account, Boolean> foreign = (EntityColumn) links.table().column("is_primary");
+		EntityColumn<Account, Boolean> foreign = (EntityColumn) IS_PRIMARY;
+		EntityColumn<Account, Object> raw = (EntityColumn) USERNAME;
 
 		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE, BOB));
-		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).set("missing", 1L));
-		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).set("unique_id", BOB));
-		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).set("username", 5L));
-		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).set("username", null));
-		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).set("last_seen_at", 1L).set("last_seen_at", 2L));
-		assertThrows(IllegalArgumentException.class, () -> reservations.update("recovery:alice").when("expires_at", 0));
-		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).when("last_seen_at", 1L).when("last_seen_at", 2L));
-		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).when(foreign, true));
-		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).when("last_seen_at", 1L).when("last_seen_at", null));
-		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).whenBelow("username", 1L));
-		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).whenBelow("last_seen_at", 1));
-		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).whenBelow("last_seen_at", 1L).whenBelow("last_seen_at", 2L));
-		assertThrows(IllegalArgumentException.class, () -> reservations.update("recovery:alice").whenAtLeast("unique_id", 1L));
-		assertThrows(IllegalStateException.class, () -> accounts.update(ALICE).when("last_seen_at", null).execute());
+		assertThrows(IllegalArgumentException.class, () -> accounts.update("alice"));
+		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).set(AccountColumns.UNIQUE_ID, BOB));
+		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).set(raw, 5L));
+		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).set(USERNAME, null));
+		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).set(LAST_SEEN_AT, 1L).set(LAST_SEEN_AT, 2L));
+		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).set(foreign, true));
+		assertThrows(IllegalArgumentException.class, () -> accounts.update(ALICE).when(foreign.is(true)));
+		assertThrows(IllegalArgumentException.class, () -> accounts.update(foreign.is(true)));
+		assertThrows(IllegalArgumentException.class, () -> accounts.query(foreign.isNull()));
+		assertThrows(IllegalArgumentException.class, () -> accounts.delete(foreign.isNull()));
+		assertThrows(IllegalStateException.class, () -> accounts.update(ALICE).when(LAST_SEEN_AT.isNull()).execute());
+	}
+
+	@Test
+	@SuppressWarnings({"unchecked", "rawtypes"})
+	void refusesConditionsThatDoNotFitTheirColumn() {
+		EntityColumn<Account, Object> raw = (EntityColumn) LAST_SEEN_AT;
+
+		assertThrows(IllegalArgumentException.class, () -> AccountColumns.UNIQUE_ID.below(ALICE));
+		assertThrows(IllegalArgumentException.class, () -> IS_PRIMARY.atLeast(true));
+		assertThrows(IllegalArgumentException.class, () -> IS_PRIMARY.ascending());
+		assertThrows(IllegalArgumentException.class, () -> raw.is(1));
+		assertThrows(IllegalArgumentException.class, () -> USERNAME.in(List.of()));
+		assertThrows(NullPointerException.class, () -> USERNAME.is(null));
+	}
+
+	@Test
+	void queriesByConditionsInOrder() {
+		insertReservations();
+
+		assertEquals(List.of("a", "b", "c", "d", "e"), keys(reservations.query(RESERVATION_KEY.isNotNull()).orderBy(RESERVATION_KEY.ascending()).list()));
+		assertEquals(List.of("e", "d", "c"), keys(reservations.query(EXPIRES_AT.atLeast(30L)).orderBy(EXPIRES_AT.descending()).list()));
+		assertEquals(List.of("b", "d"), keys(reservations.query(RESERVATION_KEY.in("b", "d", "z")).orderBy(RESERVATION_KEY.ascending()).list()));
+		assertEquals(List.of("a", "e"), keys(reservations.query(EXPIRES_AT.below(20L).or(EXPIRES_AT.above(40L))).orderBy(RESERVATION_KEY.ascending()).list()));
+		assertEquals(List.of("b", "c", "d"), keys(reservations.query(EXPIRES_AT.below(20L).or(EXPIRES_AT.above(40L)).not()).orderBy(RESERVATION_KEY.ascending()).list()));
+		assertEquals(List.of("c", "e"), keys(reservations.query(AccountReservationColumns.UNIQUE_ID.is(BOB).and(RESERVATION_KEY.isNot("x"))).orderBy(RESERVATION_KEY.ascending()).list()));
+		assertEquals(List.of("a", "b"), keys(reservations.query(RESERVATION_KEY.below("c")).orderBy(RESERVATION_KEY.ascending()).list()));
+		assertEquals(List.of("d", "c", "a", "b"), keys(reservations.query(EXPIRES_AT.atMost(40L))
+				.orderBy(CREATED_AT.ascending(), RESERVATION_KEY.descending())
+				.list()));
+		assertEquals(List.of(), reservations.query(EXPIRES_AT.above(100L)).list());
+	}
+
+	@Test
+	void readsPagesTheFirstRowCountsAndExistence() {
+		insertReservations();
+		Where<AccountReservation> every = RESERVATION_KEY.isNotNull();
+
+		assertEquals(List.of("a", "b"), keys(reservations.query(every).orderBy(RESERVATION_KEY.ascending()).limit(2).list()));
+		assertEquals(List.of("c", "d"), keys(reservations.query(every).orderBy(RESERVATION_KEY.ascending()).offset(2).limit(2).list()));
+		assertEquals(List.of("d", "e"), keys(reservations.query(every).orderBy(RESERVATION_KEY.ascending()).offset(3).list()));
+		assertEquals("e", reservations.query(every).orderBy(EXPIRES_AT.descending()).first().orElseThrow().reservationKey());
+		assertEquals("b", reservations.query(every).orderBy(EXPIRES_AT.descending()).offset(3).first().orElseThrow().reservationKey());
+		assertEquals(Optional.empty(), reservations.query(EXPIRES_AT.above(100L)).first());
+
+		assertEquals(5, reservations.query(every).count());
+		assertEquals(2, reservations.query(AccountReservationColumns.UNIQUE_ID.is(BOB)).limit(1).count());
+		assertEquals(0, reservations.query(EXPIRES_AT.above(100L)).count());
+		assertTrue(reservations.query(EXPIRES_AT.is(30L)).exists());
+		assertFalse(reservations.query(EXPIRES_AT.is(31L)).exists());
+	}
+
+	@Test
+	void streamsEntitiesInsideItsHandle() {
+		insertReservations();
+
+		List<String> streamed = new ArrayList<>();
+		reservations.query(EXPIRES_AT.atLeast(20L))
+				.orderBy(RESERVATION_KEY.descending())
+				.stream(stream -> stream.map(AccountReservation::reservationKey).forEach(streamed::add));
+
+		assertEquals(List.of("e", "d", "c", "b"), streamed);
+	}
+
+	@Test
+	void comparesAndOrdersText() {
+		accounts.insert(new Account(ALICE, "alice", null, null));
+		accounts.insert(new Account(BOB, "bob", null, null));
+
+		assertEquals(List.of(BOB, ALICE), accounts.query(USERNAME.atLeast("alice")).orderBy(USERNAME.descending()).list().stream().map(Account::uniqueId).toList());
+		assertEquals(List.of(ALICE), accounts.query(USERNAME.below("b")).list().stream().map(Account::uniqueId).toList());
+	}
+
+	@Test
+	void updatesAndDeletesEveryRowThatMeetsACondition() {
+		insertReservations();
+
+		assertEquals(2, reservations.update(AccountReservationColumns.UNIQUE_ID.is(BOB)).set(CREATED_AT, 0L).execute());
+		assertEquals(1, reservations.update(AccountReservationColumns.UNIQUE_ID.is(BOB)).set(CREATED_AT, 9L).when(EXPIRES_AT.above(40L)).execute());
+		assertEquals(0, reservations.update(EXPIRES_AT.above(100L)).set(CREATED_AT, 9L).execute());
+		assertEquals(List.of(0L, 9L), reservations.query(AccountReservationColumns.UNIQUE_ID.is(BOB)).orderBy(RESERVATION_KEY.ascending()).list().stream()
+				.map(AccountReservation::createdAt)
+				.toList());
+
+		assertEquals(3, reservations.delete(EXPIRES_AT.atMost(30L)));
+		assertEquals(0, reservations.delete(EXPIRES_AT.atMost(30L)));
+		assertEquals(List.of("d", "e"), keys(reservations.query(RESERVATION_KEY.isNotNull()).orderBy(RESERVATION_KEY.ascending()).list()));
+	}
+
+	@Test
+	void insertsAndUpsertsInBatches() {
+		accounts.insertAll(List.of(new Account(ALICE, "Alice", null, null), new Account(BOB, "Bob", null, null)));
+		links.insert(new ProviderLink("premium", "alice-subject", ALICE, true, 10L, null));
+		reservations.insertAll(List.of());
+
+		links.upsertAll(List.of(
+				new ProviderLink("premium", "alice-subject", ALICE, false, 20L, 21L),
+				new ProviderLink("premium", "bob-subject", BOB, true, 30L, null)
+		), ProviderLinkColumns.LAST_SEEN_AT);
+		reservations.upsertAll(List.of(new AccountReservation("a", ALICE, 1L, 2L), new AccountReservation("b", BOB, 3L, 4L)));
+		reservations.upsertAll(List.of(new AccountReservation("a", BOB, 5L, 6L)));
+
+		assertEquals(2, accounts.query(AccountColumns.UNIQUE_ID.in(ALICE, BOB)).count());
+		assertEquals(Optional.of(new ProviderLink("premium", "alice-subject", ALICE, true, 10L, 21L)), links.find("premium", "alice-subject"));
+		assertEquals(Optional.of(new ProviderLink("premium", "bob-subject", BOB, true, 30L, null)), links.find("premium", "bob-subject"));
+		assertEquals(List.of(new AccountReservation("a", BOB, 5L, 6L), new AccountReservation("b", BOB, 3L, 4L)),
+				reservations.query(RESERVATION_KEY.isNotNull()).orderBy(RESERVATION_KEY.ascending()).list());
+	}
+
+	@Test
+	void insertsABatchEntirelyOrNotAtAll() {
+		accounts.insert(new Account(BOB, "Bob", null, null));
+
+		assertThrows(StatementException.class, () -> accounts.insertAll(List.of(new Account(ALICE, "Alice", null, null), new Account(BOB, "Bobby", null, null))));
+		assertThrows(KeyConflictException.class, () -> links.upsertAll(List.of(
+				new ProviderLink("premium", "bob-subject", BOB, true, 10L, null),
+				new ProviderLink("premium", "other-subject", BOB, true, 20L, null)
+		)));
+
+		assertEquals(Optional.empty(), accounts.find(ALICE));
+		assertEquals(Optional.of(new Account(BOB, "Bob", null, null)), accounts.find(BOB));
+		assertEquals(Optional.empty(), links.find("premium", "bob-subject"));
+	}
+
+	@Test
+	void runsOnTheHandleOfATransaction() {
+		jdbi.useTransaction(handle -> {
+			EntityAccess<Account> bound = accounts.on(handle);
+			bound.insert(new Account(ALICE, "Alice", null, null));
+			bound.update(ALICE).set(LAST_SEEN_AT, 5L).execute();
+			assertEquals(Optional.of(new Account(ALICE, "Alice", null, 5L)), bound.find(ALICE));
+		});
+		assertThrows(IllegalStateException.class, () -> jdbi.useTransaction(handle -> {
+			EntityAccess<Account> bound = accounts.on(handle);
+			bound.insertAll(List.of(new Account(BOB, "Bob", null, null)));
+			bound.delete(ALICE);
+			assertEquals(1, bound.query(AccountColumns.UNIQUE_ID.isNotNull()).count());
+			throw new IllegalStateException("roll back");
+		}));
+
+		assertEquals(Optional.of(new Account(ALICE, "Alice", null, 5L)), accounts.find(ALICE));
+		assertEquals(Optional.empty(), accounts.find(BOB));
 	}
 
 	@Test
@@ -453,6 +603,20 @@ abstract class EntityAccessContract {
 		assertEquals(List.of(new ProviderLink("premium", "alice-subject", ALICE, true, 10L, null)), queries.links(ALICE, true));
 		assertEquals(List.of(ALICE, BOB), queries.uniqueIds());
 		assertEquals(List.of(false, true), queries.primaries());
+	}
+
+	private void insertReservations() {
+		reservations.insertAll(List.of(
+				new AccountReservation("a", ALICE, 3L, 10L),
+				new AccountReservation("b", ALICE, 4L, 20L),
+				new AccountReservation("c", BOB, 2L, 30L),
+				new AccountReservation("d", ALICE, 1L, 40L),
+				new AccountReservation("e", BOB, 5L, 50L)
+		));
+	}
+
+	private static List<String> keys(List<AccountReservation> stored) {
+		return stored.stream().map(AccountReservation::reservationKey).toList();
 	}
 
 	@RegisterDialecticaMapper(Account.class)

@@ -1,7 +1,6 @@
 package me.whereareiam.dialectica.dialect.mysql;
 
 import me.whereareiam.dialectica.common.dialect.StatementCases;
-import me.whereareiam.dialectica.dialect.Comparison;
 import me.whereareiam.dialectica.dialect.SqlStatement;
 import me.whereareiam.dialectica.dialect.StatementRenderer;
 import me.whereareiam.dialectica.schema.ColumnDefinition;
@@ -17,7 +16,6 @@ import java.util.List;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
-import static me.whereareiam.dialectica.common.dialect.StatementCases.condition;
 import static me.whereareiam.dialectica.common.dialect.StatementCases.insertThenUpdate;
 import static me.whereareiam.dialectica.common.dialect.StatementCases.onConflict;
 import static me.whereareiam.dialectica.common.dialect.StatementCases.statement;
@@ -104,25 +102,25 @@ class MysqlStatementRendererTest {
 		);
 	}
 
+	static Stream<Arguments> ranges() {
+		return StatementCases.ranges(
+				statement("SELECT reservation_key, unique_id, created_at, expires_at FROM identica_account_reservations WHERE expires_at <= ? ORDER BY expires_at ASC, reservation_key DESC LIMIT 20 OFFSET 40", "expires_at"),
+				statement("SELECT reservation_key, unique_id, created_at, expires_at FROM identica_account_reservations WHERE expires_at <= ? LIMIT 5", "expires_at"),
+				statement("SELECT reservation_key, unique_id, created_at, expires_at FROM identica_account_reservations WHERE expires_at <= ? LIMIT 18446744073709551615 OFFSET 3", "expires_at"),
+				statement("SELECT 1 FROM identica_account_reservations WHERE expires_at <= ? LIMIT 1", "expires_at")
+		);
+	}
+
 	@ParameterizedTest(name = "{0}")
-	@MethodSource("cases")
+	@MethodSource({"cases", "ranges", "me.whereareiam.dialectica.common.dialect.StatementCases#shared"})
 	void renders(String name, Function<StatementRenderer, Object> render, Object expected) {
 		assertEquals(expected, render.apply(renderer));
 	}
 
-	@Test
-	void refusesToAddressARowWithoutAPrimaryKey() {
-		assertThrows(IllegalArgumentException.class, () -> renderer.upsert(StatementCases.UNKEYED, List.of()));
-		assertThrows(IllegalArgumentException.class, () -> renderer.select(StatementCases.UNKEYED));
-		assertThrows(IllegalArgumentException.class, () -> renderer.delete(StatementCases.UNKEYED));
-		assertThrows(IllegalArgumentException.class, () -> renderer.update(StatementCases.UNKEYED, List.of("unique_id"), List.of()));
-	}
-
-	@Test
-	void refusesAnUpsertOfAKeyColumnAnUnknownColumnOrAColumnTwice() {
-		assertThrows(IllegalArgumentException.class, () -> renderer.upsert(StatementCases.RESERVATIONS, List.of("reservation_key")));
-		assertThrows(IllegalArgumentException.class, () -> renderer.upsert(StatementCases.RESERVATIONS, List.of("missing")));
-		assertThrows(IllegalArgumentException.class, () -> renderer.upsert(StatementCases.RESERVATIONS, List.of("expires_at", "expires_at")));
+	@ParameterizedTest(name = "{0}")
+	@MethodSource("me.whereareiam.dialectica.common.dialect.StatementCases#refusals")
+	void refuses(String name, Function<StatementRenderer, Object> render) {
+		assertThrows(IllegalArgumentException.class, () -> render.apply(renderer));
 	}
 
 	@Test
@@ -138,27 +136,5 @@ class MysqlStatementRendererTest {
 				statement("INSERT INTO identica_accounts (unique_id, username) VALUES (?, ?)", "unique_id", "username"),
 				statement("UPDATE identica_accounts SET username = ? WHERE unique_id = ?", "username", "unique_id")
 		), renderer.upsert(indexed, List.of("username")));
-	}
-
-	@Test
-	void refusesToReplaceATableWhoseColumnsAllBelongToTheKey() {
-		assertThrows(IllegalArgumentException.class, () -> renderer.replace(StatementCases.FLAGS));
-	}
-
-	@Test
-	void refusesAnUpdateOfNoColumnsAKeyColumnOrAnUnknownColumn() {
-		assertThrows(IllegalArgumentException.class, () -> renderer.update(StatementCases.RESERVATIONS, List.of(), List.of(condition("expires_at", Comparison.EQUALS))));
-		assertThrows(IllegalArgumentException.class, () -> renderer.update(StatementCases.RESERVATIONS, List.of("reservation_key"), List.of()));
-		assertThrows(IllegalArgumentException.class, () -> renderer.update(StatementCases.RESERVATIONS, List.of("missing"), List.of()));
-		assertThrows(IllegalArgumentException.class, () -> renderer.update(StatementCases.RESERVATIONS, List.of("expires_at"), List.of(condition("missing", Comparison.EQUALS))));
-		assertThrows(IllegalArgumentException.class, () -> renderer.update(StatementCases.RESERVATIONS, List.of("expires_at", "expires_at"), List.of()));
-	}
-
-	@Test
-	void refusesAConditionGivenTwiceOrAnOrderedConditionOnAColumnWithoutNumbers() {
-		assertThrows(IllegalArgumentException.class, () -> renderer.update(StatementCases.RESERVATIONS, List.of("expires_at"), List.of(condition("expires_at", Comparison.BELOW), condition("expires_at", Comparison.BELOW))));
-		assertThrows(IllegalArgumentException.class, () -> renderer.update(StatementCases.RESERVATIONS, List.of("expires_at"), List.of(condition("unique_id", Comparison.BELOW))));
-		assertThrows(IllegalArgumentException.class, () -> renderer.update(StatementCases.RESERVATIONS, List.of("expires_at"), List.of(condition("reservation_key", Comparison.AT_LEAST))));
-		assertThrows(IllegalArgumentException.class, () -> renderer.update(StatementCases.LINKS, List.of("unique_id"), List.of(condition("is_primary", Comparison.ABOVE))));
 	}
 }
