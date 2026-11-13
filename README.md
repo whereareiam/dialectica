@@ -15,15 +15,16 @@ repositories {
 
 dependencies {
     // The entry point and the dialects of the databases you support:
-    implementation("me.whereareiam:dialectica:3.0.0")
-    implementation("me.whereareiam:dialectica-dialect-sqlite:3.0.0")
-    implementation("me.whereareiam:dialectica-dialect-postgresql:3.0.0")
+    implementation("me.whereareiam:dialectica:5.0.0")
+    implementation("me.whereareiam:dialectica-dialect-sqlite:5.0.0")
+    implementation("me.whereareiam:dialectica-dialect-postgresql:5.0.0")
 
     // Or the entry point with all five dialects:
-    implementation("me.whereareiam:dialectica-bundle:3.0.0")
+    implementation("me.whereareiam:dialectica-bundle:5.0.0")
 
-    // Jdbi access to entities:
-    implementation("me.whereareiam:dialectica-adapter-jdbi:3.0.0")
+    // Jdbi access to entities, and the typed columns of your entities:
+    implementation("me.whereareiam:dialectica-adapter-jdbi:5.0.0")
+    annotationProcessor("me.whereareiam:dialectica-processor:5.0.0")
 
     // Your database's JDBC driver, and Jdbi when you use the adapter.
 }
@@ -37,6 +38,7 @@ dependencies {
 | `dialectica-dialect-sqlite`, `-h2`, `-postgresql`, `-mysql`, `-mariadb` | One dialect each; MariaDB builds on MySQL and brings it along |
 | `dialectica-bundle` | `dialectica` and all five dialects as one dependency; no code of its own |
 | `dialectica-adapter-jdbi` | `EntityAccess`, `DialecticaPlugin` and row mapping for Jdbi |
+| `dialectica-processor` | The annotation processor that writes each entity's `<Entity>Columns` |
 
 The code is the same either way. Dialects are found at runtime among the dialect modules on the
 classpath. Opening a database whose dialect module is missing fails with an
@@ -263,15 +265,103 @@ accounts.replace(account);                         // true when a row had the ke
 Optional<Account> found = accounts.find(uniqueId);
 accounts.delete(uniqueId);                         // true when a row had the key
 
+List<Account> recent = accounts.query(AccountColumns.LAST_SEEN_AT.atLeast(since))
+        .orderBy(AccountColumns.LAST_SEEN_AT.descending())
+        .limit(20)
+        .list();
+int removed = accounts.delete(AccountColumns.LAST_SEEN_AT.below(cutoff));
+
 EntityAccess<ProviderLink> links = EntityAccess.of(jdbi, Dialectica.entity(ProviderLink.class));
 links.find("premium", subject);                    // composite key, in key order
-links.upsert(link, "is_primary", "last_seen_at");  // a known link changes only these columns
+links.upsert(link, ProviderLinkColumns.IS_PRIMARY, ProviderLinkColumns.LAST_SEEN_AT);
 ```
 
 `DialecticaPlugin` reads the dialect from a connection when it is installed, or takes one:
 `new DialecticaPlugin(dialect)`. It binds and maps `UUID` and `Boolean` values the way the
 database stores them, so a UUID is text on SQLite and `CHAR(36)` on MySQL. This also applies to
-hand-written queries. Every operation but `insert` and `insertIfAbsent` needs a primary key.
+hand-written queries. `find`, `update(key...)`, `delete(key...)`, `upsert` and `replace` need a
+primary key; queries, updates and deletes by a condition do not. A key is given as the values of
+its columns in key order and checked against their types when the call runs.
+
+### Typed columns
+
+`dialectica-processor`, added to the compiler as an `annotationProcessor`, writes a class
+`<Entity>Columns` next to every `@Table` entity, with one `EntityColumn` constant per column, named
+after the column in upper snake case:
+
+```java
+// written for Account: AccountColumns.UNIQUE_ID, USERNAME, CREATED_AT, LAST_SEEN_AT
+public static final EntityColumn<Account, Long> LAST_SEEN_AT = ...;
+```
+
+Code that knows a column's name only at runtime looks it up with
+`accounts.column("last_seen_at", Long.class)`. The processor reports a field whose type has no
+column type, and two columns whose constants would share a name, as compile errors.
+
+### Conditions
+
+A condition is a `Where<Entity>` value built from the columns, which queries, updates and deletes
+take. It can be kept in a field and used again:
+
+```java
+Where<StoreEntry> expired = StoreEntryColumns.STORE_NAME.is(store)
+        .and(StoreEntryColumns.EXPIRES_AT.atMost(now));
+```
+
+| Method | SQL |
+|--------|-----|
+| `is(value)`, `isNot(value)` | `column = ?`, `column <> ?` |
+| `isNull()`, `isNotNull()` | `column IS NULL`, `column IS NOT NULL` |
+| `in(values...)` | `column IN (?, ...)`, at least one value |
+| `below`, `above`, `atMost`, `atLeast` | `<`, `>`, `<=`, `>=` |
+| `and(other)`, `or(other)`, `not()` | `AND`, `OR`, `NOT (...)` |
+
+`below`, `above`, `atMost`, `atLeast`, `ascending()` and `descending()` need a column with an
+order: numbers, and text, which compares by the database's collation, so MySQL and MariaDB ignore
+case by default while the others do not. UUID and boolean columns have none. Conditions compare as
+SQL does: a column that is `NULL` meets no comparison with a value, `isNot` included, and neither
+does its negation; `isNull` and `isNotNull` test for it. A value has to have the column's Java type,
+so a `bigint()` column takes `0L`, not `0`.
+
+### Queries
+
+`query(where)` reads the entities whose rows meet a condition. It can order them, skip some and
+limit how many it reads, and runs on one of its terminal methods:
+
+```java
+EntityQuery<StoreEntry> stored = entries.query(StoreEntryColumns.STORE_NAME.is(store))
+        .orderBy(StoreEntryColumns.ENTRY_KEY.ascending());
+List<StoreEntry> page = stored.offset(40).limit(20).list();
+Optional<StoreEntry> first = stored.first();
+long count = stored.count();                       // order, limit and offset do not apply
+boolean any = stored.exists();
+stored.stream(stream -> stream.forEach(cache::put)); // reads rows as the stream is pulled
+```
+
+A query is an immutable value, so `orderBy`, `limit` and `offset` return a changed copy. A page read
+with an offset needs an order to be stable. The stream of `stream` is open only while its consumer
+runs.
+
+| Database | Limit and offset |
+|----------|------------------|
+| PostgreSQL, H2 | `OFFSET n ROWS FETCH FIRST m ROWS ONLY` |
+| MySQL, MariaDB, SQLite | `LIMIT m OFFSET n` |
+
+### Transactions and batches
+
+Each call runs on its own handle of the `Jdbi`. `on(handle)` binds an access to a handle, so that
+several calls share its transaction:
+
+```java
+jdbi.useTransaction(handle -> {
+    EntityAccess<StoreEntry> bound = entries.on(handle);
+    bound.delete(StoreEntryColumns.STORE_NAME.is(store));
+    bound.insertAll(replacement);
+});
+```
+
+`insertAll` and `upsertAll` write many entities as batches, in one transaction: on the access's own
+handle, or inside the transaction the bound handle has open. Either every entity is written or none.
 
 ### Inserting if absent
 
@@ -301,11 +391,11 @@ because the plain code is the same for every refused constraint.
 
 `upsert(entity)` inserts the entity or, when a row has its primary key, updates every column of that
 row outside the key. `upsert(entity, columns...)` updates only the columns it names and leaves the
-others as the row holds them; it also takes the table's `EntityColumn`s. The primary key decides
-whether the row exists. A row that holds another unique key of the entity, such as a second link of
-the same account to the same provider, fails the upsert with a `KeyConflictException` on every
-database and stays as it is. Of several instances that write the same key at once, each one
-succeeds, and the row ends with the values of the last.
+others as the row holds them. The primary key decides whether the row exists. A row that holds
+another unique key of the entity, such as a second link of the same account to the same provider,
+fails the upsert with a `KeyConflictException` on every database and stays as it is. Of several
+instances that write the same key at once, each one succeeds, and the row ends with the values of
+the last.
 
 | Database | Table whose only unique key is the primary key | Table with other unique keys |
 |----------|-----------------------------------------------|------------------------------|
@@ -325,58 +415,49 @@ nothing also throws it.
 ### Updating some columns
 
 `replace` writes every column of the entity. `update` sets only the columns it names, in one
-`UPDATE` statement, without reading the row first:
+`UPDATE` statement, without reading the row first: `update(key...)` of the row with a primary key,
+`update(where)` of every row that meets a condition. `execute()` returns the number of rows it
+updated.
 
 ```java
-accounts.update(uniqueId).set("last_seen_at", now).execute();
-links.update("premium", subject).set("is_primary", true).set("last_seen_at", now).execute();
+accounts.update(uniqueId).set(AccountColumns.LAST_SEEN_AT, now).execute();
+sessions.update(SessionColumns.EXPIRES_AT.atMost(now)).set(SessionColumns.CLOSED, true).execute();
 ```
 
-`when` lets the update change the row only while a column equals a value; `when(column, null)`
-requires the column to be `NULL`. `execute()` returns whether the row with the key existed and
-matched every condition, so a value can be claimed once across instances that share the database:
+`when(where)` lets the update change a row only while its current values meet a condition as
+well, so a value can be claimed once across instances that share the database:
 
 ```java
 boolean used = recoveryCodes.update(uniqueId, code)
-        .set("used_at", now)
-        .when("used_at", 0L)
-        .execute();                                // true for exactly one instance
+        .set(RecoveryCodeColumns.USED_AT, now)
+        .when(RecoveryCodeColumns.USED_AT.is(0L))
+        .execute() > 0;                            // true for exactly one instance
 ```
 
-`whenBelow`, `whenAbove`, `whenAtMost` and `whenAtLeast` compare a `bigint()` or `integer()` column
-with `<`, `>`, `<=` and `>=`. They let a counter only move forward, again in one statement, so of
-several instances that offer the same value only one gets it accepted:
+An ordered guard lets a counter only move forward, again in one statement, so of several instances
+that offer the same value only one gets it accepted:
 
 ```java
 boolean accepted = enrollments.update(uniqueId, method)
-        .set("accepted_counter", step)
-        .whenBelow("accepted_counter", step)
-        .execute();                                // false once step or a later one was accepted
+        .set(EnrollmentColumns.ACCEPTED_COUNTER, step)
+        .when(EnrollmentColumns.ACCEPTED_COUNTER.below(step))
+        .execute() > 0;                            // false once step or a later one was accepted
 ```
 
-An update that would give the row a unique key another row holds fails with a
+An update that would give a row a unique key another row holds fails with a
 `KeyConflictException`, as an upsert does, so a caller can tell a taken value from any other failure:
 
 ```java
 try {
-    usernames.update(uniqueId).set("username_key", key).execute();
+    usernames.update(uniqueId).set(UsernameColumns.USERNAME_KEY, key).execute();
 } catch (KeyConflictException taken) {
     // another row holds the key
 }
 ```
 
-A column that is `NULL` meets no ordered condition. A column takes each kind of condition once, so
-`whenAtLeast` and `whenBelow` together bound it from both sides, while `when` and `when(column, null)`
-exclude each other.
-
-Columns are named as in the table. `set` and the conditions also take the table's `EntityColumn`s, which
-check the value's type at compile time. A value has to have the column's Java type, so a `bigint()`
-column takes `0L`, not `0`. A key column cannot be set, and a `NULL` only goes into a nullable
-column.
-
-MySQL and MariaDB report the rows an update matched, unless the connection sets
-`useAffectedRows=true`. With that option, an update that writes the values the row already holds
-returns `false`.
+A key column cannot be set, and a `NULL` only goes into a nullable column. MySQL and MariaDB
+report the rows an update matched, unless the connection sets `useAffectedRows=true`. With that
+option, an update that writes the values the row already holds counts no row.
 
 ### Hand-written queries
 
@@ -406,18 +487,25 @@ Dialect dialect = Dialect.of(connection.getMetaData());
 List<String> ddl = dialect.schemaRenderer().render(new CreateTable(accounts));
 Upsert upsert = dialect.statementRenderer().upsert(accounts, List.of("username", "is_locked"));
 SqlStatement lock = dialect.statementRenderer().update(accounts, List.of("is_locked"),
-        List.of(new Condition("is_locked", Comparison.EQUALS)));
+        new Condition.All(List.of(
+                new Condition.Comparing("unique_id", Comparison.EQUALS),
+                new Condition.Comparing("is_locked", Comparison.EQUALS))));
+SqlStatement page = dialect.statementRenderer().select(accounts,
+        Selection.of(new Condition.Comparing("last_seen_at", Comparison.AT_LEAST))
+                .withOrderings(List.of(new Ordering("last_seen_at", Ordering.Direction.DESCENDING)))
+                .withLimit(20));
 ```
 
-The renderers, `SqlStatement` and `Upsert` are in `me.whereareiam.dialectica.dialect`. An `Upsert`
-is either `Upsert.OnConflict`, one statement, or `Upsert.InsertThenUpdate`, an insert and the update
-to run when it inserts no row or fails with a key conflict. `insertIfAbsent` renders the insert that
-skips or fails on a taken key. `replace` renders the
-update of every column outside the key, and `update` of the columns given, with `Condition`s that
-compare a column by a `Comparison`: equal to a parameter, `NULL`, or, for number columns, below,
-above, at most or at least a parameter. Schema statements are plain DDL without `IF [NOT] EXISTS`. Entity statements use a positional
-`?` for each column that `SqlStatement.getParameters()` names, and `dialect.bind(...)` binds a
-value the way the database stores it.
+The renderers, `SqlStatement`, `Upsert`, `Condition`, `Selection` and `Ordering` are in
+`me.whereareiam.dialectica.dialect`. An `Upsert` is either `Upsert.OnConflict`, one statement, or
+`Upsert.InsertThenUpdate`, an insert and the update to run when it inserts no row or fails with a
+key conflict. `insertIfAbsent` renders the insert that skips or fails on a taken key. `replace`
+renders the update of every column outside the key. `select`, `count`, `exists`, `update` and
+`delete` reach the rows that meet a `Condition`: a `Comparing` of a column by a `Comparison`, an
+`In`, or `All`, `Any` and `Not` of other conditions; a `Where` is one together with its values.
+Schema statements are plain DDL without `IF [NOT] EXISTS`. Entity statements use a positional `?`
+for each column that `SqlStatement.getParameters()` names, in the order of the condition's
+comparisons, and `dialect.bind(...)` binds a value the way the database stores it.
 
 ## Writing a dialect
 
@@ -446,7 +534,8 @@ public final class ExampleDialect extends AnsiDialect {
 ```
 
 The schema renderer supplies the column types, and the statement renderer supplies the upsert and
-the insert if absent from the forms `AnsiStatementRenderer` renders. The dialect's `isKeyConflict`
+the insert if absent from the forms `AnsiStatementRenderer` renders. A select's limit and offset
+render as the ANSI `OFFSET ... FETCH FIRST`, unless the renderer overrides `range`. The dialect's `isKeyConflict`
 recognises the error a plain insert fails with on a taken key.
 Override whatever else the database writes differently, as the MariaDB dialect does on top of
 MySQL's.

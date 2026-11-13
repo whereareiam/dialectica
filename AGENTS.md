@@ -14,6 +14,8 @@ MySQL and MariaDB: it creates the tables, renders each database's SQL, and reads
   `dialect-postgresql`, `dialect-mysql`, `dialect-mariadb`); MariaDB builds on MySQL.
 - `dialectica-adapter/*`: access to entities through a library, `adapter-jdbi` for Jdbi.
 - `dialectica`: the entry point and the schema writer; projects add the dialects they support.
+- `dialectica-processor`: the annotation processor that writes each entity's `<Entity>Columns`;
+  projects add it as an `annotationProcessor`. It depends on no Dialectica module.
 - `dialectica-bundle`: the entry point with every dialect as one dependency. Its tests run the schema
   writer against all five databases.
 - `build-logic`: the `library` convention, Java 17, publishing, and the `VERSION` environment
@@ -23,7 +25,8 @@ Keep a database's behavior in its dialect module and a library's in its adapter 
 
 ## Build and test
 
-- `./gradlew test build` builds everything and runs the rendering, reader, SQLite and H2 tests.
+- `./gradlew test build` builds everything and runs the rendering, reader, processor, SQLite and H2
+  tests.
 - `-PintegrationTests=true` also runs the PostgreSQL, MySQL and MariaDB tests (tag
   `database-container`), which start containers and need Docker.
 - `VERSION=<version> ./gradlew publishToMavenLocal` lets a project build against a local version.
