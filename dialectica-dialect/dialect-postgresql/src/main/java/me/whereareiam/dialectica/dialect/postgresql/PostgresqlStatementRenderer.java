@@ -11,7 +11,8 @@ import java.util.List;
 
 /**
  * Renders PostgreSQL's entity statements; an insert if absent and an upsert are an
- * {@code INSERT ... ON CONFLICT}.
+ * {@code INSERT ... ON CONFLICT}, and a select's range is the ANSI
+ * {@code OFFSET n ROWS FETCH FIRST m ROWS ONLY}.
  */
 public final class PostgresqlStatementRenderer extends AnsiStatementRenderer {
 	/**

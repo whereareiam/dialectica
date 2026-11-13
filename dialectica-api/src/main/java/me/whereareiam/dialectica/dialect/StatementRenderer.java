@@ -6,12 +6,19 @@ import org.jetbrains.annotations.NotNull;
 import java.util.List;
 
 /**
- * Renders the statements that read and write single rows of a table in one dialect, naming
- * tables and columns exactly as the dialect's {@link SchemaRenderer} does.
+ * Renders the statements that read and write rows of a table in one dialect, naming tables and
+ * columns exactly as the dialect's {@link SchemaRenderer} does.
  * <p>
- * Every statement but {@link #insert(TableDefinition)} and {@link #insertIfAbsent(TableDefinition)}
- * addresses a row by its primary key and refuses a table without one with an
- * {@link IllegalArgumentException}.
+ * Inserts and upserts write one row from every column's value. Selects, counts, updates and
+ * deletes reach the rows that meet a {@link Condition}; a row is addressed by its primary key with
+ * a condition that compares each key column. Conditions render the same way on every dialect, as
+ * {@code =}, {@code <>}, {@code <}, {@code >}, {@code <=}, {@code >=}, {@code IS [NOT] NULL},
+ * {@code IN}, {@code AND}, {@code OR} and {@code NOT}; a dialect differs in how a select limits
+ * its rows.
+ * <p>
+ * Every method refuses a condition or ordering on a column the table lacks, and an
+ * {@linkplain Comparison#isOrdered() ordered} comparison or an {@link Ordering} of a column whose
+ * type is not {@linkplain Comparison#orders ordered}, with an {@link IllegalArgumentException}.
  */
 public interface StatementRenderer {
 	/**
@@ -72,46 +79,59 @@ public interface StatementRenderer {
 	@NotNull SqlStatement replace(@NotNull TableDefinition table);
 
 	/**
-	 * Renders the update of some columns of the row with a primary key, which changes the row only
-	 * while its current values meet conditions:
+	 * Renders the update of some columns of every row that meets a condition:
 	 * <pre>{@code
-	 * UPDATE table SET column = ?, ... WHERE key = ? AND ... AND condition AND ...
+	 * UPDATE table SET column = ?, ... WHERE condition
 	 * }</pre>
-	 * Each condition renders as its {@link Comparison}, such as {@code column = ?},
-	 * {@code column IS NULL} or {@code column < ?}, in the order given. The update is one statement,
-	 * so of several instances that update the same row under the same conditions at once, only the
-	 * first changes it.
+	 * The update is one statement, so of several instances that update the same row under a
+	 * condition its update breaks at once, only the first changes it.
 	 *
-	 * @param table      table to update
-	 * @param columns    columns to set, outside the primary key; at least one
-	 * @param conditions conditions on the row's current values
-	 * @return the statement, parameterized by the columns to set, then the key, then the columns of
-	 *         the conditions that {@linkplain Comparison#takesValue() take a value}
-	 * @throws IllegalArgumentException when the table has no primary key, no columns are given, a
-	 *                                  column to set belongs to the key, a column is not one of the
-	 *                                  table's, a column is set twice, a condition is given twice,
-	 *                                  or an {@linkplain Comparison#isOrdered() ordered} condition
-	 *                                  compares a column that does not hold numbers
+	 * @param table     table to update
+	 * @param columns   columns to set, outside the primary key; at least one
+	 * @param condition condition the rows meet
+	 * @return the statement, parameterized by the columns to set, then by the condition
+	 * @throws IllegalArgumentException when no columns are given, a column to set belongs to the
+	 *                                  key, a column is not one of the table's, or a column is set
+	 *                                  twice
 	 */
-	@NotNull SqlStatement update(
-			@NotNull TableDefinition table,
-			@NotNull List<String> columns,
-			@NotNull List<Condition> conditions
-	);
+	@NotNull SqlStatement update(@NotNull TableDefinition table, @NotNull List<String> columns, @NotNull Condition condition);
 
 	/**
-	 * Renders the select of every column of the row with a primary key.
+	 * Renders the select of every column of the rows of a selection, in its order and range. A
+	 * dialect renders the range as the ANSI {@code OFFSET n ROWS FETCH FIRST m ROWS ONLY}, which
+	 * PostgreSQL and H2 do, or as {@code LIMIT m OFFSET n}, which MySQL, MariaDB and SQLite do.
 	 *
-	 * @param table table to read
-	 * @return the statement, parameterized by the primary key
+	 * @param table     table to read
+	 * @param selection rows to read
+	 * @return the statement, parameterized by the selection's condition
 	 */
-	@NotNull SqlStatement select(@NotNull TableDefinition table);
+	@NotNull SqlStatement select(@NotNull TableDefinition table, @NotNull Selection selection);
 
 	/**
-	 * Renders the delete of the row with a primary key.
+	 * Renders the count of the rows that meet a condition, {@code SELECT COUNT(*) FROM table WHERE
+	 * condition}, whose one row holds the count.
 	 *
-	 * @param table table to delete from
-	 * @return the statement, parameterized by the primary key
+	 * @param table     table to read
+	 * @param condition condition the rows meet
+	 * @return the statement, parameterized by the condition
 	 */
-	@NotNull SqlStatement delete(@NotNull TableDefinition table);
+	@NotNull SqlStatement count(@NotNull TableDefinition table, @NotNull Condition condition);
+
+	/**
+	 * Renders a select that returns one row when a row meets a condition and none otherwise.
+	 *
+	 * @param table     table to read
+	 * @param condition condition a row meets
+	 * @return the statement, parameterized by the condition
+	 */
+	@NotNull SqlStatement exists(@NotNull TableDefinition table, @NotNull Condition condition);
+
+	/**
+	 * Renders the delete of every row that meets a condition.
+	 *
+	 * @param table     table to delete from
+	 * @param condition condition the rows meet
+	 * @return the statement, parameterized by the condition
+	 */
+	@NotNull SqlStatement delete(@NotNull TableDefinition table, @NotNull Condition condition);
 }
