@@ -12,7 +12,8 @@ import java.lang.reflect.Type;
 import java.util.Optional;
 
 /**
- * Reads {@link java.util.UUID} and {@link Boolean} columns through the dialect that
+ * Reads {@link java.util.UUID}, {@link Boolean}, {@link java.time.Instant} and
+ * {@link java.time.LocalDate} columns through the dialect that
  * {@link DialecticaPlugin} chose; the plugin registers it. A
  * primitive {@code boolean} reads {@code NULL} as {@code false}, as Jdbi does for primitives.
  */

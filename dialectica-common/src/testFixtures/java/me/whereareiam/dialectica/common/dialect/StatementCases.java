@@ -62,6 +62,13 @@ public final class StatementCases {
 			.primaryKey("unique_id")
 			.build();
 
+	public static final TableDefinition EVENTS = TableDefinition.builder("identica_account_events")
+			.column(ColumnDefinition.builder("event_key", ColumnType.varchar(64)).notNull().build())
+			.column(ColumnDefinition.builder("happened_at", ColumnType.instant()).notNull().build())
+			.column(ColumnDefinition.builder("due_on", ColumnType.date()).build())
+			.primaryKey("event_key")
+			.build();
+
 	public static final TableDefinition UNKEYED = TableDefinition.builder("identica_events")
 			.column(ColumnDefinition.builder("unique_id", ColumnType.uuid()).build())
 			.build();
@@ -221,6 +228,11 @@ public final class StatementCases {
 				Arguments.of("update by a condition", (Function<StatementRenderer, Object>) renderer -> renderer.update(RESERVATIONS, List.of("expires_at"),
 								any(condition("expires_at", Comparison.ABOVE), condition("unique_id", Comparison.IS_NULL))),
 						statement("UPDATE identica_account_reservations SET expires_at = ? WHERE expires_at > ? OR unique_id IS NULL", "expires_at", "expires_at")),
+				Arguments.of("compare and order instants and dates", (Function<StatementRenderer, Object>) renderer -> renderer.select(EVENTS,
+								Selection.of(all(condition("happened_at", Comparison.AT_LEAST), condition("due_on", Comparison.BELOW)))
+										.withOrderings(List.of(new Ordering("happened_at", Ordering.Direction.DESCENDING), new Ordering("due_on", Ordering.Direction.ASCENDING)))),
+						statement("SELECT event_key, happened_at, due_on FROM identica_account_events WHERE happened_at >= ? AND due_on < ? ORDER BY happened_at DESC, due_on ASC",
+								"happened_at", "due_on")),
 				Arguments.of("select a table without a primary key", (Function<StatementRenderer, Object>) renderer -> renderer.select(UNKEYED, Selection.of(condition("unique_id", Comparison.IS_NULL))),
 						statement("SELECT unique_id FROM identica_events WHERE unique_id IS NULL")),
 				Arguments.of("update a table without a primary key", (Function<StatementRenderer, Object>) renderer -> renderer.update(UNKEYED, List.of("unique_id"), condition("unique_id", Comparison.EQUALS)),

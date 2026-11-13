@@ -14,6 +14,8 @@ import org.jetbrains.annotations.NotNull;
  *     <tr><td>{@link #bigint()}</td><td>INTEGER</td><td>BIGINT</td><td>BIGINT</td><td>BIGINT</td></tr>
  *     <tr><td>{@link #integer()}</td><td>INTEGER</td><td>INTEGER</td><td>INTEGER</td><td>INT</td></tr>
  *     <tr><td>{@link #bool()}</td><td>INTEGER</td><td>BOOLEAN</td><td>BOOLEAN</td><td>BOOLEAN</td></tr>
+ *     <tr><td>{@link #instant()}</td><td>TEXT</td><td>TIMESTAMP WITH TIME ZONE</td><td>TIMESTAMP WITH TIME ZONE</td><td>DATETIME(6)</td></tr>
+ *     <tr><td>{@link #date()}</td><td>TEXT</td><td>DATE</td><td>DATE</td><td>DATE</td></tr>
  * </table>
  * MySQL, MariaDB and H2 cannot use a {@link #text()} column in a key or an index; use
  * {@link #varchar(int)} for those.
@@ -24,7 +26,9 @@ public sealed interface ColumnType permits
 		ColumnType.TextType,
 		ColumnType.BigintType,
 		ColumnType.IntegerType,
-		ColumnType.BoolType {
+		ColumnType.BoolType,
+		ColumnType.InstantType,
+		ColumnType.DateType {
 	/**
 	 * Returns the type of a UUID column.
 	 *
@@ -80,6 +84,30 @@ public sealed interface ColumnType permits
 	 */
 	static @NotNull ColumnType bool() {
 		return new BoolType();
+	}
+
+	/**
+	 * Returns the type of a column that holds a point in time, to the microsecond; finer parts of
+	 * a written value are cut off. PostgreSQL and H2 store it as {@code TIMESTAMP WITH TIME ZONE},
+	 * MySQL and MariaDB as {@code DATETIME(6)} in UTC, which, unlike their {@code TIMESTAMP}, reaches
+	 * past 2038, and SQLite as ISO-8601 text of a fixed width in UTC,
+	 * {@code 2026-11-14T09:30:00.000000Z}, which sorts in time order. Every database holds the
+	 * years 1000 to 9999.
+	 *
+	 * @return the instant type
+	 */
+	static @NotNull ColumnType instant() {
+		return new InstantType();
+	}
+
+	/**
+	 * Returns the type of a column that holds a calendar date without a time of day: {@code DATE},
+	 * and ISO-8601 text, {@code 2026-11-14}, on SQLite. Every database holds the years 1000 to 9999.
+	 *
+	 * @return the date type
+	 */
+	static @NotNull ColumnType date() {
+		return new DateType();
 	}
 
 	/**
@@ -150,6 +178,26 @@ public sealed interface ColumnType permits
 		@Override
 		public String toString() {
 			return "bool";
+		}
+	}
+
+	/**
+	 * A point in time, to the microsecond.
+	 */
+	record InstantType() implements ColumnType {
+		@Override
+		public String toString() {
+			return "instant";
+		}
+	}
+
+	/**
+	 * A calendar date.
+	 */
+	record DateType() implements ColumnType {
+		@Override
+		public String toString() {
+			return "date";
 		}
 	}
 }

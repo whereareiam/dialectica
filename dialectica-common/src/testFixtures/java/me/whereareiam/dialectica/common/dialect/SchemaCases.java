@@ -67,6 +67,13 @@ public final class SchemaCases {
 					.build())
 			.build();
 
+	public static final TableDefinition EVENTS = TableDefinition.builder("identica_account_events")
+			.column(ColumnDefinition.builder("event_key", ColumnType.varchar(64)).notNull().build())
+			.column(ColumnDefinition.builder("happened_at", ColumnType.instant()).notNull().build())
+			.column(ColumnDefinition.builder("due_on", ColumnType.date()).build())
+			.primaryKey("event_key")
+			.build();
+
 	public static final AddColumn ADD_NULLABLE = new AddColumn("identica_accounts",
 			ColumnDefinition.builder("last_seen_at", ColumnType.bigint()).build());
 
@@ -99,7 +106,8 @@ public final class SchemaCases {
 		return List.of(
 				"create accounts", "create links", "create sessions", "drop table", "rename table",
 				"add nullable column", "add required column", "add text column", "drop column",
-				"drop reserved column", "create unique index", "create quoted index", "drop index"
+				"drop reserved column", "create unique index", "create quoted index", "drop index",
+				"create a table of instants and dates"
 		);
 	}
 
@@ -117,7 +125,8 @@ public final class SchemaCases {
 				new DropColumn("identica_sessions", "key"),
 				new CreateIndex("identica_provider_links", IndexDefinition.unique("identica_provider_links_primary", "unique_id", "is_primary")),
 				new CreateIndex("Legacy Table", IndexDefinition.plain("legacy_order", "order")),
-				new DropIndex("identica_accounts", "identica_accounts_username")
+				new DropIndex("identica_accounts", "identica_accounts_username"),
+				new CreateTable(EVENTS)
 		);
 	}
 }

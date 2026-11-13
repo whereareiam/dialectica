@@ -26,6 +26,8 @@ public final class H2SchemaRenderer extends AnsiSchemaRenderer {
 		if (type instanceof ColumnType.BigintType) return "BIGINT";
 		if (type instanceof ColumnType.IntegerType) return "INTEGER";
 		if (type instanceof ColumnType.BoolType) return "BOOLEAN";
+		if (type instanceof ColumnType.InstantType) return "TIMESTAMP WITH TIME ZONE";
+		if (type instanceof ColumnType.DateType) return "DATE";
 
 		throw new IllegalArgumentException("Unknown column type " + type);
 	}

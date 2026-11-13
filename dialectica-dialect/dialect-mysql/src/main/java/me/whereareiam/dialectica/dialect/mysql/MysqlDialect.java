@@ -12,6 +12,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 /**
@@ -53,9 +56,31 @@ public class MysqlDialect extends AnsiDialect {
 		return readUuidAsText(row, column);
 	}
 
+	/**
+	 * Binds an instant as the date and time it is in UTC, which a {@code DATETIME(6)} column holds
+	 * without converting it through the session's time zone.
+	 */
+	@Override
+	protected void bindInstant(@NotNull PreparedStatement statement, int index, @NotNull Instant value) throws SQLException {
+		statement.setObject(index, LocalDateTime.ofInstant(value, ZoneOffset.UTC));
+	}
+
+	/**
+	 * Reads an instant from the date and time in UTC a {@code DATETIME(6)} column holds.
+	 */
+	@Override
+	protected @Nullable Instant readInstant(@NotNull ResultSet row, int column) throws SQLException {
+		LocalDateTime value = row.getObject(column, LocalDateTime.class);
+
+		return value == null ? null : value.toInstant(ZoneOffset.UTC);
+	}
+
 	@Override
 	protected int sqlType(@NotNull ColumnType type) {
-		return type instanceof ColumnType.UuidType ? Types.VARCHAR : super.sqlType(type);
+		if (type instanceof ColumnType.UuidType) return Types.VARCHAR;
+		if (type instanceof ColumnType.InstantType) return Types.TIMESTAMP;
+
+		return super.sqlType(type);
 	}
 
 	/**

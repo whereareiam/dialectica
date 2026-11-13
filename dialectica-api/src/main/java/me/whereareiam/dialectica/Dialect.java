@@ -72,7 +72,7 @@ public interface Dialect {
 
 	/**
 	 * Binds a value of a column type as a statement parameter, in the form this dialect stores it;
-	 * SQLite and MySQL, for example, store a UUID as text.
+	 * SQLite and MySQL, for example, store a UUID as text, and SQLite an instant as text.
 	 *
 	 * @param statement statement to bind to
 	 * @param index     1-based index of the parameter
@@ -85,7 +85,8 @@ public interface Dialect {
 	/**
 	 * Reads a value of a column type from the current row, converting it from the form this dialect
 	 * stores it in to the Java type that matches {@code type}: {@link java.util.UUID},
-	 * {@link String}, {@link Long}, {@link Integer} or {@link Boolean}.
+	 * {@link String}, {@link Long}, {@link Integer}, {@link Boolean}, {@link java.time.Instant} or
+	 * {@link java.time.LocalDate}.
 	 *
 	 * @param row    result set positioned on a row
 	 * @param column 1-based index of the column

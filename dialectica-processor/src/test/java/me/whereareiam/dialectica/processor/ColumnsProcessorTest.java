@@ -45,7 +45,9 @@ class ColumnsProcessorTest {
 						@Nullable Long expiresAt,
 						int revision,
 						boolean pinned,
-						String value
+						String value,
+						java.time.Instant updatedAt,
+						java.time.@Nullable LocalDate dueOn
 				) {
 				}
 				"""));
@@ -103,6 +105,16 @@ class ColumnsProcessorTest {
 				\t */
 				\tpublic static final EntityColumn<StoreEntry, String> VALUE = table.column("value", String.class);
 
+				\t/**
+				\t * The column {@code updated_at}.
+				\t */
+				\tpublic static final EntityColumn<StoreEntry, java.time.Instant> UPDATED_AT = table.column("updated_at", java.time.Instant.class);
+
+				\t/**
+				\t * The column {@code due_on}.
+				\t */
+				\tpublic static final EntityColumn<StoreEntry, java.time.LocalDate> DUE_ON = table.column("due_on", java.time.LocalDate.class);
+
 				\tprivate StoreEntryColumns() {
 				\t}
 				}
@@ -157,12 +169,12 @@ class ColumnsProcessorTest {
 				import me.whereareiam.dialectica.entity.annotation.Table;
 
 				@Table("example_events")
-				public record Event(String name, java.time.Instant happenedAt) {
+				public record Event(String name, java.time.LocalDateTime happenedAt) {
 				}
 				"""));
 
 		assertFalse(compilation.succeeded());
-		assertTrue(compilation.errors().contains("Field happenedAt of type java.time.Instant has no column type; use UUID, String, long, int or boolean or their wrappers"),
+		assertTrue(compilation.errors().contains("Field happenedAt of type java.time.LocalDateTime has no column type; use UUID, String, long, int, boolean or their wrappers, Instant or LocalDate"),
 				compilation.toString());
 	}
 

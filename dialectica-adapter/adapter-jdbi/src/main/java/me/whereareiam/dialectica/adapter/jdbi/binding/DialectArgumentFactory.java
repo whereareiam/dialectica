@@ -9,12 +9,14 @@ import org.jdbi.v3.core.argument.ArgumentFactory;
 import org.jdbi.v3.core.config.ConfigRegistry;
 
 import java.lang.reflect.Type;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 
 /**
- * Binds {@link java.util.UUID} and {@link Boolean} parameters through the dialect that
+ * Binds {@link java.util.UUID}, {@link Boolean}, {@link Instant} and {@link LocalDate} parameters through the dialect that
  * {@link DialecticaPlugin} chose; the plugin registers it.
  */
 public final class DialectArgumentFactory implements ArgumentFactory.Preparable {
@@ -37,6 +39,8 @@ public final class DialectArgumentFactory implements ArgumentFactory.Preparable 
 	static ColumnType columnType(Type type) {
 		if (type == UUID.class) return ColumnType.uuid();
 		if (type == Boolean.class || type == boolean.class) return ColumnType.bool();
+		if (type == Instant.class) return ColumnType.instant();
+		if (type == LocalDate.class) return ColumnType.date();
 
 		return null;
 	}

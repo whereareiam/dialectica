@@ -7,6 +7,8 @@ import me.whereareiam.dialectica.schema.type.ColumnType;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -27,6 +29,8 @@ import java.util.function.Function;
  *     <tr><td>{@link ColumnType#bigint()}</td><td>{@link Long}</td></tr>
  *     <tr><td>{@link ColumnType#integer()}</td><td>{@link Integer}</td></tr>
  *     <tr><td>{@link ColumnType#bool()}</td><td>{@link Boolean}</td></tr>
+ *     <tr><td>{@link ColumnType#instant()}</td><td>{@link Instant}</td></tr>
+ *     <tr><td>{@link ColumnType#date()}</td><td>{@link LocalDate}</td></tr>
  * </table>
  * <p>
  * A column builds the {@link Where conditions} and {@link Order orders} that queries, updates and
@@ -45,7 +49,8 @@ import java.util.function.Function;
  *         Account::uniqueId);
  * }</pre>
  * Ordered comparisons and orders need a column whose type is
- * {@linkplain Comparison#orders(ColumnType) ordered}: numbers, and text by the database's collation.
+ * {@linkplain Comparison#orders(ColumnType) ordered}: numbers, instants and dates, and text by the
+ * database's collation.
  *
  * @param <T> type of the entity
  * @param <V> Java type of the column's values
@@ -99,6 +104,8 @@ public final class EntityColumn<T, V> {
 		if (type instanceof ColumnType.BigintType) return Long.class;
 		if (type instanceof ColumnType.IntegerType) return Integer.class;
 		if (type instanceof ColumnType.BoolType) return Boolean.class;
+		if (type instanceof ColumnType.InstantType) return Instant.class;
+		if (type instanceof ColumnType.DateType) return LocalDate.class;
 
 		throw new IllegalArgumentException("Unknown column type " + type);
 	}

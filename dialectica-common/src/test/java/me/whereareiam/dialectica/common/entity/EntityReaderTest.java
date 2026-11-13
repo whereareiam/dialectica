@@ -25,6 +25,8 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -264,6 +266,28 @@ class EntityReaderTest {
 	}
 
 	@Table("broken")
+	record DefaultInstant(@Id UUID id, @Default("2026-01-01T00:00:00Z") Instant since) {
+	}
+
+	@Table("identica_account_events")
+	record AccountEvent(@Id @Length(64) String eventKey, Instant happenedAt, @Nullable LocalDate dueOn) {
+	}
+
+	@Test
+	void readsInstantsAndDates() {
+		EntityTable<AccountEvent> table = EntityReader.read(AccountEvent.class);
+		Instant now = Instant.parse("2026-11-14T09:30:00.123456Z");
+		AccountEvent event = new AccountEvent("login", now, LocalDate.of(2026, 12, 1));
+
+		assertEquals(ColumnType.instant(), table.column("happened_at").column().getType());
+		assertEquals(ColumnType.date(), table.column("due_on").column().getType());
+		assertFalse(table.column("happened_at").column().isNullable());
+		assertTrue(table.column("due_on").column().isNullable());
+		assertEquals(now, table.column("happened_at", Instant.class).get(event));
+		assertEquals(LocalDate.of(2026, 12, 1), table.column("due_on", LocalDate.class).get(event));
+	}
+
+	@Table("broken")
 	record NullablePrimitive(@Id UUID id, @Nullable long score) {
 	}
 
@@ -354,6 +378,7 @@ class EntityReaderTest {
 	@Test
 	void refusesInvalidEntitiesWhenReadingThem() {
 		assertMessage(UnsupportedType.class, "score", "has no column type");
+		assertMessage(DefaultInstant.class, "since", "@Default applies to UUID, text, number and boolean fields, not to Instant");
 		assertMessage(NullablePrimitive.class, "score", "primitive field cannot be nullable");
 		assertMessage(LengthOnNumber.class, "score", "@Length applies to String fields only");
 		assertMessage(NullableKey.class, "id", "key field cannot be nullable");

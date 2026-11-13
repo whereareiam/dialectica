@@ -71,7 +71,8 @@ public enum Comparison {
 	/**
 	 * Tells whether the values of a column type have an order that ordered comparisons and
 	 * {@link Ordering orderings} follow: numbers ({@link ColumnType#bigint()},
-	 * {@link ColumnType#integer()}) by value, and text ({@link ColumnType#varchar(int)},
+	 * {@link ColumnType#integer()}) by value, instants ({@link ColumnType#instant()}) and dates
+	 * ({@link ColumnType#date()}) in time, and text ({@link ColumnType#varchar(int)},
 	 * {@link ColumnType#text()}) by the collation of the database, which differs between databases;
 	 * MySQL and MariaDB, for example, ignore case by default. UUIDs and booleans have no order.
 	 *
@@ -82,6 +83,8 @@ public enum Comparison {
 		return type instanceof ColumnType.BigintType
 				|| type instanceof ColumnType.IntegerType
 				|| type instanceof ColumnType.VarcharType
-				|| type instanceof ColumnType.TextType;
+				|| type instanceof ColumnType.TextType
+				|| type instanceof ColumnType.InstantType
+				|| type instanceof ColumnType.DateType;
 	}
 }

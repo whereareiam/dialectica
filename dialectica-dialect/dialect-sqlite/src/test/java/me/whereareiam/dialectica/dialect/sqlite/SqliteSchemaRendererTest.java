@@ -59,6 +59,9 @@ class SqliteSchemaRendererTest {
 				),
 				List.of(
 						"DROP INDEX identica_accounts_username"
+				),
+				List.of(
+						"CREATE TABLE identica_account_events (event_key VARCHAR(64) NOT NULL, happened_at TEXT NOT NULL, due_on TEXT, PRIMARY KEY (event_key))"
 				)
 		);
 	}
