@@ -1,7 +1,7 @@
 [versions]
 
 # general
-lombok = "1.18.42"
+lombok = "1.18.48"
 jetbrains-annotations = "26.0.2"
 
 # database
