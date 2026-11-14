@@ -8,7 +8,7 @@ jetbrains-annotations = "26.0.2"
 jdbi = "3.55.0"
 postgresql = "42.7.8"
 mariadb = "3.5.6"
-mysql = "26.7.0"
+mysql = "26.10.0"
 sqlite = "3.53.4.0"
 
 # testing
