@@ -2,7 +2,7 @@
 
 # general
 lombok = "1.18.42"
-jetbrains-annotations = "26.0.2"
+jetbrains-annotations = "26.1.0"
 
 # database
 jdbi = "3.55.0"
