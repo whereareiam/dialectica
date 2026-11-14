@@ -13,7 +13,7 @@ sqlite = "3.53.4.0"
 
 # testing
 junit = "6.0.1"
-h2 = "2.4.240"
+h2 = "2.5.252"
 testcontainers = "1.21.4"
 
 [libraries]
